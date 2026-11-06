@@ -1,0 +1,95 @@
+{
+  "name": "AFK Bot",
+  "bot-account": {
+    "username": "AFKBot",
+    "password": "",
+    "type": "offline"
+  },
+  "server": {
+    "ip": "yourserver.aternos.me",
+    "port": 25565,
+    "version": "auto",
+    "try-creative": false
+  },
+  "position": {
+    "enabled": false,
+    "x": 0,
+    "y": 100,
+    "z": 0
+  },
+  "utils": {
+    "auto-auth": {
+      "enabled": true,
+      "password": "AfkBot@123"
+    },
+    "anti-afk": {
+      "enabled": true,
+      "sneak": false
+    },
+    "chat-messages": {
+      "enabled": false,
+      "repeat": true,
+      "repeat-delay": 120,
+      "messages": []
+    },
+    "chat-log": true,
+    "auto-reconnect": true,
+    "auto-reconnect-delay": 2000,
+    "max-reconnect-delay": 120000
+  },
+  "movement": {
+    "enabled": true,
+    "random-walk": {
+      "enabled": true,
+      "radius": 100,
+      "min-pause": 2000,
+      "max-pause": 8000
+    },
+    "circle-walk": {
+      "enabled": false,
+      "radius": 4,
+      "speed": 3000
+    },
+    "look-around": {
+      "enabled": true,
+      "interval": 5000
+    },
+    "random-jump": {
+      "enabled": true,
+      "interval": 10000
+    }
+  },
+  "modules": {
+    "avoidMobs": true,
+    "combat": true,
+    "beds": false,
+    "chat": true,
+    "console-commands": true
+  },
+  "combat": {
+    "attack-mobs": true,
+    "auto-eat": true
+  },
+  "beds": {
+    "pick-up-day": false,
+    "place-night": false
+  },
+  "discord": {
+    "enabled": false,
+    "webhookUrl": "",
+    "events": {
+      "connect": true,
+      "disconnect": true,
+      "chat": false
+    }
+  },
+  "chat": {
+    "respond": true
+  },
+  "resource-pack": {
+    "enabled": true,
+    "download": true,
+    "max-size-mb": 500,
+    "timeout-seconds": 120
+  }
+}
