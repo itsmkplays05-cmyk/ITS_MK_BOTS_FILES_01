@@ -11,12 +11,14 @@ let bot, timers = [], retrying = false;
 const clear = () => { timers.forEach(t => { clearInterval(t); clearTimeout(t); }); timers = []; };
 const log = m => console.log(`[${new Date().toISOString()}] ${m}`);
 
-function retry() {
+let plannedLeave = false;
+function retry(delay) {
   if (retrying) return;
   retrying = true;
   clear();
-  log(`Reconnecting in ${cfg.reconnectDelay / 1000}s...`);
-  setTimeout(() => { retrying = false; start(); }, cfg.reconnectDelay);
+  const d = delay || cfg.reconnectDelay;
+  log(`Rejoining in ${d / 1000}s...`);
+  setTimeout(() => { retrying = false; start(); }, d);
 }
 
 function start() {
@@ -25,8 +27,22 @@ function start() {
     bot = mineflayer.createBot({ host, port, username, version, auth: cfg.auth });
   } catch (err) { log('Create error: ' + err.message); return retry(); }
 
+  bot.physicsEnabled = false; // no move packets until chunks are loaded
+  if (bot.physics) bot.physics.enabled = false;
+
   bot.once('spawn', () => {
     log('Bot joined the server');
+    timers.push(setTimeout(() => {
+      log(`${cfg.sessionMinutes} min done - leaving, will rejoin after ${cfg.leaveWait / 1000}s`);
+      plannedLeave = true;
+      bot.quit();
+    }, cfg.sessionMinutes * 60 * 1000));
+    timers.push(setTimeout(() => {
+      bot.physicsEnabled = true;
+      if (bot.physics) bot.physics.enabled = true;
+      log('Movement enabled');
+      startRandomMove();
+    }, 10000));
     if (cfg.authPassword) {
       timers.push(setTimeout(() => {
         bot.chat(`/register ${cfg.authPassword} ${cfg.authPassword}`);
@@ -40,18 +56,33 @@ function start() {
         i = (i + 1) % cfg.messages.length;
       }, cfg.chatDelay * 1000));
     }
-    if (cfg.antiAfk) {
-      timers.push(setInterval(() => {
-        bot.setControlState('jump', true);
-        setTimeout(() => bot.setControlState('jump', false), 300);
-      }, 20000));
-    }
   });
+
+  function startRandomMove() {
+    if (!cfg.antiAfk) return;
+    const dirs = ['forward', 'back', 'left', 'right'];
+    const step = () => {
+      if (!bot || !bot.entity) return;
+      try {
+        bot.clearControlStates();
+        bot.look(Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.6, true);
+        const d = dirs[Math.floor(Math.random() * dirs.length)];
+        bot.setControlState(d, true);
+        if (Math.random() < 0.5) bot.setControlState('jump', true);
+        timers.push(setTimeout(() => { try { bot.clearControlStates(); } catch (_) {} }, 400 + Math.random() * 1200));
+      } catch (_) {}
+      timers.push(setTimeout(step, 6000 + Math.random() * 9000));
+    };
+    step();
+  }
 
   bot.on('chat', (u, m) => { if (u !== bot.username) log(`<${u}> ${m}`); });
   bot.on('kicked', r => log('Kicked: ' + (typeof r === 'string' ? r : JSON.stringify(r))));
   bot.on('error', err => log('Error: ' + err.message));
-  bot.on('end', () => { log('Disconnected'); retry(); });
+  bot.on('end', () => {
+    if (plannedLeave) { plannedLeave = false; log('Left server'); retry(cfg.leaveWait); }
+    else { log('Disconnected/kicked'); retry(cfg.reconnectDelay); }
+  });
 }
 
 process.on('uncaughtException', err => log('Uncaught: ' + err.message));

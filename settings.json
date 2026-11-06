@@ -1,20 +1,23 @@
 {
-  "username": "ITS_GG_BOT",
-  "host": "ITS-FRIEND-ONLY-SMP.aternos.me",
-  "port": 37984,
+  "username": "GG_BOT",
+  "host": "Deepak_SMP.aternos.me",
+  "port": 38292,
   "version": false,
   "auth": "offline",
-  "authPassword": "84675567",
+  "authPassword": "",
   "antiAfk": true,
-  "reconnectDelay": 5000,
-  "chatRepeat": false,
+  "reconnectDelay": 3000,
+  "chatRepeat": true,
   "chatDelay": 25,
   "messages": [
     "/login 2345678",
-    "MADE BY MK",
-    "SERVER OWNERS MK",
+    "MADE BY Pipka",
+    "DISCORD SERVER = discord.gg/Jma9yFsqdF",
+    "SERVER OWNERS pipkagamer",
     "DONT USE XRAY ETC MODE DIRECT BAN",
     "DON'T ABUSE WITH PLAYERS",
     "THANKS FOR COME"
-  ]
+  ],
+  "sessionMinutes": 30,
+  "leaveWait": 10000
 }
