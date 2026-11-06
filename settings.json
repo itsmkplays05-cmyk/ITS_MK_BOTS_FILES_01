@@ -6,9 +6,9 @@
     "type": "offline"
   },
   "server": {
-    "ip": "solocloud.site",
-    "port": 25565,
-    "version": "1.20.1",
+    "ip": "ITS-FRIEND-ONLY-SMP.aternos.me",
+    "port": 37984,
+    "version": "1.21.11",
     "try-creative": false
   },
   "position": {
@@ -20,7 +20,7 @@
   "utils": {
     "auto-auth": {
       "enabled": true,
-      "password": "SoloPlayz"
+      "password": "7467557757"
     },
     "anti-afk": {
       "enabled": true,
@@ -29,9 +29,7 @@
     "chat-messages": {
       "enabled": true,
       "repeat": true,
-      "repeat-delay": 120,
+      "repeat-delay": 19999020,
       "messages": [
-        "I'm a regular player",
-        "Subscribe to SoloPlayz!",
-        "Want Cheap Premium Server? https://discord.gg/VRMUnDkf95"
+        "I'm a regular player"
       ]
