@@ -1,7 +1,7 @@
 {
-  "name": "ITS_MK_BOT_02",
+  "name": "ITS_MK_BOT_01",
   "bot-account": {
-    "username": "ITS_MK_BOT_02",
+    "username": "ITS_MK_BOT_01",
     "password": "",
     "type": "offline"
   },
@@ -12,7 +12,7 @@
     "try-creative": false
   },
   "position": {
-    "enabled": true,
+    "enabled": false,
     "x": 0,
     "y": 100,
     "z": 0
@@ -20,7 +20,7 @@
   "utils": {
     "auto-auth": {
       "enabled": true,
-      "password": "7467557757"
+      "password": "8472857"
     },
     "anti-afk": {
       "enabled": true,
@@ -29,7 +29,12 @@
     "chat-messages": {
       "enabled": true,
       "repeat": true,
-      "repeat-delay": 19999020,
+      "repeat-delay": 120000000,
       "messages": [
         "I'm a regular player"
       ]
+    },
+    "chat-log": true,
+    "auto-reconnect": true,
+    "auto-reconnect-delay": 2000,
+    "max-reconnect-delay": 120000
