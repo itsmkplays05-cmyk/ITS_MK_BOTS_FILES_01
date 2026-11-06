@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AFK Bot Console</title>
+<style>
+:root {
+  --bg: #f3f4f6; --panel: #ffffff; --line: #dfe3e8; --ink: #1a2230; --muted: #5f6b7a;
+  --accent: #2f5bea; --ok: #12805c; --ok-bg: #e3f4ec; --bad: #b42318; --bad-bg: #fdeceb;
+  --warn: #9a5b00; --warn-bg: #fff3dc;
+  --log-bg: #111827; --log-ink: #cbd5e1; --log-dim: #7b8798;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f141b; --panel: #171e28; --line: #263140; --ink: #e6ebf2; --muted: #93a0b3;
+    --accent: #6f93ff; --ok: #4cc79b; --ok-bg: #12332a; --bad: #ff8a80; --bad-bg: #3a1a18;
+    --warn: #f2b84b; --warn-bg: #3a2c10; --log-bg: #0a0e14;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding: 20px 16px 32px;
+}
+.wrap { max-width: 960px; margin: 0 auto; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+.sub { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+
+.pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font-weight: 600; font-size: 13px; }
+.pill i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.pill.connected { color: var(--ok); background: var(--ok-bg); }
+.pill.connecting { color: var(--warn); background: var(--warn-bg); }
+.pill.stopped, .pill.unreachable { color: var(--bad); background: var(--bad-bg); }
+.pill.connecting i { animation: blink 1.2s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .pill.connecting i { animation: none; } }
+
+.notice { display: none; background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 14px; }
+.notice.show { display: block; }
+
+.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.card dt { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.card dd { margin: 0; font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
+.card dd small { font-size: 12px; font-weight: 400; color: var(--muted); display: block; margin-top: 2px; }
+
+.bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+button { font: inherit; font-weight: 600; font-size: 14px; border-radius: 8px; padding: 9px 16px; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { color: var(--bad); }
+.spacer { flex: 1; }
+.toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+.toggle input { width: 16px; height: 16px; accent-color: var(--accent); }
+
+.console { background: var(--log-bg); border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
+.console-head { display: flex; justify-content: space-between; padding: 10px 16px; color: var(--log-dim); font-size: 12px; border-bottom: 1px solid #243042; }
+#log { height: 380px; overflow-y: auto; padding: 12px 16px; font: 12.5px/1.65 ui-monospace, "SF Mono", Consolas, monospace; color: var(--log-ink); }
+#log div { white-space: pre-wrap; overflow-wrap: anywhere; }
+#log .err { color: #ff8a80; } #log .warn { color: #f2b84b; } #log .ok { color: #5fd3a5; } #log .ctl { color: #8fb0ff; }
+.empty { color: var(--log-dim); padding: 24px 0; text-align: center; }
+.cmd { display: flex; border-top: 1px solid #243042; }
+.cmd input { flex: 1; min-width: 0; background: transparent; border: 0; color: #e6ebf2; font: 13px ui-monospace, Consolas, monospace; padding: 13px 16px; }
+.cmd input:focus { outline: none; background: #141c28; }
+.cmd button { border: 0; border-left: 1px solid #243042; border-radius: 0; background: transparent; color: #8fb0ff; padding: 0 20px; }
+
+#toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .2s; max-width: 90vw; }
+#toast.show { opacity: 1; }
+
+@media (max-width: 760px) { .grid { grid-template-columns: repeat(2, 1fr); } #log { height: 320px; } }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header class="top">
+    <div>
+      <h1 id="title">AFK Bot Console</h1>
+      <p class="sub" id="subtitle">Loading…</p>
+    </div>
+    <span id="pill" class="pill connecting"><i></i><span id="pill-text">Connecting</span></span>
+  </header>
+
+  <div id="notice" class="notice">Safe mode is on: the bot stays in place and does not walk or jump. This was enabled to prevent “invalid movement” kicks.</div>
+
+  <dl class="grid">
+    <div class="card"><dt>Online for</dt><dd id="uptime">—</dd></div>
+    <div class="card"><dt>Position</dt><dd id="coords">—</dd></div>
+    <div class="card"><dt>Reconnects / kicks</dt><dd id="recon">—<small id="lastkick"></small></dd></div>
+    <div class="card"><dt>Server</dt><dd id="server">—<small id="version"></small></dd></div>
+  </dl>
+
+  <div class="bar">
+    <button id="start" class="primary">Start bot</button>
+    <button id="stop" class="danger">Stop bot</button>
+    <span class="spacer"></span>
+    <label class="toggle"><input type="checkbox" id="safe"> Safe mode (no walking)</label>
+  </div>
+
+  <section class="console" aria-label="Bot console">
+    <div class="console-head"><span>Console</span><span id="count">0 lines</span></div>
+    <div id="log" role="log" aria-live="off"></div>
+    <form class="cmd" id="form" autocomplete="off">
+      <input id="input" placeholder="Type a message, or /help for commands" spellcheck="false" aria-label="Command">
+      <button type="submit">Send</button>
+    </form>
+  </section>
+</main>
+<div id="toast" role="status"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (s) => {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h}h ${m}m` : m ? `${m}m ${s % 60}s` : `${s}s`;
+};
+const toast = (msg) => {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast.id); toast.id = setTimeout(() => t.classList.remove("show"), 2600);
+};
+const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }).then((r) => r.json());
+
+async function refresh() {
+  try {
+    const d = await (await fetch("/health")).json();
+    const labels = { connected: "Connected", connecting: "Connecting", stopped: "Stopped" };
+    $("pill").className = "pill " + d.status;
+    $("pill-text").textContent = labels[d.status];
+    $("title").textContent = d.name + " Console";
+    document.title = d.name + " Console";
+    $("subtitle").textContent = `${d.username} on ${d.server}`;
+    $("uptime").textContent = d.status === "connected" ? fmt(d.uptime) : "—";
+    $("coords").textContent = d.coords ? `${Math.floor(d.coords.x)}, ${Math.floor(d.coords.y)}, ${Math.floor(d.coords.z)}` : "—";
+    $("recon").firstChild.textContent = `${d.reconnectAttempts} / ${d.kicks}`;
+    $("lastkick").textContent = d.lastKick || "";
+    $("server").firstChild.textContent = d.server;
+    $("version").textContent = "Minecraft " + d.version;
+    $("notice").classList.toggle("show", d.safeMode);
+    if (document.activeElement !== $("safe")) $("safe").checked = d.safeMode;
+    $("start").disabled = d.running; $("stop").disabled = !d.running;
+  } catch (_) {
+    $("pill").className = "pill unreachable"; $("pill-text").textContent = "Dashboard unreachable";
+  }
+}
+
+async function loadLogs() {
+  try {
+    const { logs } = await (await fetch("/api/logs")).json();
+    const box = $("log");
+    const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    box.textContent = "";
+    if (!logs.length) { const e = document.createElement("div"); e.className = "empty"; e.textContent = "No output yet. Logs appear here once the bot starts."; box.append(e); }
+    for (const line of logs) {
+      const l = line.toLowerCase(), el = document.createElement("div");
+      el.className = /error|fail|fatal|kicked/.test(l) ? "err" : /warn|timeout|safe mode/.test(l) ? "warn"
+        : l.includes("[console]") || l.includes("[control]") ? "ctl" : /spawned|connected|ready/.test(l) ? "ok" : "";
+      el.textContent = line; box.append(el);
+    }
+    $("count").textContent = logs.length + (logs.length === 1 ? " line" : " lines");
+    if (stick) box.scrollTop = box.scrollHeight;
+  } catch (_) {}
+}
+
+$("start").onclick = async () => { const r = await post("/start"); toast(r.msg); refresh(); loadLogs(); };
+$("stop").onclick = async () => { const r = await post("/stop"); toast(r.msg); refresh(); loadLogs(); };
+$("safe").onchange = async (e) => { const r = await post("/safe-mode", { enabled: e.target.checked }); toast(r.msg); refresh(); };
+$("form").onsubmit = async (e) => {
+  e.preventDefault();
+  const v = $("input").value.trim(); if (!v) return;
+  $("input").value = "";
+  const r = await post("/command", { command: v });
+  if (!r.success) toast(r.msg);
+  loadLogs();
+};
+
+refresh(); loadLogs();
+setInterval(refresh, 3000);
+setInterval(loadLogs, 2500);
+</script>
+</body>
+</html>
