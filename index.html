@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GG_BOT Panel</title><link rel="icon" href="icon.png">
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0f1117;color:#e6e6e6;font:14px system-ui,sans-serif;display:flex;flex-direction:column;height:100dvh}
+header{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#181b24;border-bottom:1px solid #262a36}
+header img{width:28px;height:28px;border-radius:6px}h1{font-size:16px;margin:0;flex:1}
+.badge{padding:3px 10px;border-radius:99px;font-size:12px;font-weight:600;background:#444}
+.online{background:#1f9d55}.connecting{background:#d69e2e}.offline{background:#c0392b}
+#info{padding:8px 14px;color:#9aa3b5;font-size:12px;display:flex;flex-wrap:wrap;gap:4px 14px;background:#141720}
+#console{flex:1;overflow-y:auto;padding:10px 14px;font:12.5px ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
+.l{padding:1px 0}.t{color:#5c6578;margin-right:6px}.error{color:#ff6b6b}.warn{color:#f6c453}.success{color:#4ade80}.chat{color:#7dd3fc}.sent{color:#c4b5fd}
+#panel{padding:10px;background:#181b24;border-top:1px solid #262a36;display:flex;flex-direction:column;gap:8px}
+.row{display:flex;gap:6px;flex-wrap:wrap}
+button{background:#2b3142;color:#e6e6e6;border:0;border-radius:6px;padding:8px 12px;font-size:13px;cursor:pointer}button:active{background:#3b4560}
+.g{background:#1f9d55}.r{background:#c0392b}.y{background:#b7791f}.b{background:#5865f2}
+input{background:#0f1117;color:#e6e6e6;border:1px solid #303648;border-radius:6px;padding:8px;font-size:13px;min-width:0}
+#msg{flex:1}.c{width:62px}
+</style></head><body>
+<header><img src="icon.png" alt=""><h1>GG_BOT Panel</h1><span id="badge" class="badge">...</span></header>
+<div id="info"></div>
+<div id="console"></div>
+<div id="panel">
+  <div class="row">
+    <button class="g" onclick="cmd('start')">▶ Start</button>
+    <button class="r" onclick="cmd('stop')">■ Stop</button>
+    <button class="y" onclick="cmd('restart')">↻ Restart</button>
+    <button onclick="cmd('antiafk')">Anti-AFK</button>
+    <button onclick="cmd('clear')">Clear</button>
+  </div>
+  <div class="row">
+    <button onclick="cmd('jump')">Jump</button><button onclick="cmd('sneak')">Sneak</button>
+    <button onclick="cmd('forward')">Forward</button><button onclick="cmd('back')">Back</button>
+    <button onclick="cmd('stopmove')">Stop move</button>
+  </div>
+  <div class="row">
+    <input id="x" class="c" placeholder="X" type="number"><input id="y" class="c" placeholder="Y" type="number"><input id="z" class="c" placeholder="Z" type="number">
+    <button class="b" onclick="goto()">Go to</button>
+  </div>
+  <div class="row"><input id="msg" placeholder="Chat message or /command" onkeydown="if(event.key==='Enter')say()"><button class="b" onclick="say()">Send</button></div>
+</div>
+<script>
+let key=localStorage.getItem('pk')||'';
+const $=id=>document.getElementById(id),con=$('console');
+const H=()=>({'Content-Type':'application/json','x-panel-key':key});
+function add(l){const d=document.createElement('div');d.className='l '+l.level;
+ const t=document.createElement('span');t.className='t';t.textContent=new Date(l.t).toLocaleTimeString();
+ d.append(t,document.createTextNode(l.msg));const b=con.scrollTop+con.clientHeight>=con.scrollHeight-40;
+ con.appendChild(d);while(con.children.length>500)con.firstChild.remove();if(b)con.scrollTop=con.scrollHeight}
+function status(s){const b=$('badge');b.textContent=s.status.toUpperCase();b.className='badge '+s.status;
+ $('info').innerHTML=[`Server: ${s.server}`,`Ver: ${s.version}`,`User: ${s.username}`,`Anti-AFK: ${s.antiAfk?'ON':'OFF'}`,
+ s.health!=null?`HP: ${Math.round(s.health)}/20`:'',s.food!=null?`Food: ${s.food}`:'',s.position?`Pos: ${s.position.join(', ')}`:'',
+ s.players.length?`Players: ${s.players.length} (${s.players.join(', ')})`:''].filter(Boolean).map(x=>`<span>${x.replace(/</g,'&lt;')}</span>`).join('')}
+async function cmd(c,args){const r=await fetch('/api/command',{method:'POST',headers:H(),body:JSON.stringify({cmd:c,args})});
+ if(r.status===401){login();}}
+function say(){const m=$('msg');if(m.value.trim()){cmd('say',{text:m.value});m.value=''}}
+function goto(){cmd('goto',{x:$('x').value,y:$('y').value,z:$('z').value})}
+async function login(){const p=prompt('Panel password');if(p===null)return;key=p;localStorage.setItem('pk',p);connect()}
+let es;
+async function connect(){
+ if(es)es.close();
+ const need=(await (await fetch('/api/auth-required')).json()).required;
+ if(need&&!key)return login();
+ es=new EventSource('/api/stream?key='+encodeURIComponent(key));
+ es.addEventListener('history',e=>{con.innerHTML='';JSON.parse(e.data).forEach(add)});
+ es.addEventListener('log',e=>add(JSON.parse(e.data)));
+ es.addEventListener('status',e=>status(JSON.parse(e.data)));
+ es.onerror=async()=>{if(need){const r=await fetch('/api/status',{headers:H()});if(r.status===401){es.close();key='';localStorage.removeItem('pk');login()}}};
+}
+connect();
+</script></body></html>
