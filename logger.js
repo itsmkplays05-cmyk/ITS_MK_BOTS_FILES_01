@@ -1,18 +1,7 @@
-const logs = [];
-
-function addLog(message) {
-  const time = new Date().toLocaleTimeString();
-  const formatted = `[${time}] ${message}`;
-
-  console.log(formatted); // still goes to Render logs
-
-  logs.push(formatted);
-
-  if (logs.length > 300) logs.shift();
-}
-
-function getLogs() {
-  return logs;
-}
-
-module.exports = { addLog, getLogs };
+const stamp = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
+const out = (lvl, args) => console.log(`[${stamp()}] [${lvl}]`, ...args);
+module.exports = {
+  info: (...a) => out('INFO', a),
+  warn: (...a) => out('WARN', a),
+  error: (...a) => out('ERROR', a)
+};

@@ -1,14 +1,11 @@
-# AFK Bot
+# AFK Minecraft Bot (Railway)
 
-Start: `npm install` then `npm start`
+1. Is folder ko GitHub repo me daalo, Railway > New Project > Deploy from GitHub.
+2. Railway > Variables me ye set karo:
+   - MC_HOST = apka server address
+   - MC_PORT = 25565
+   - MC_USERNAME = bot ka naam
+   - MC_PASSWORD = AuthMe password
+3. Optional: MC_VERSION (khali chhodo = auto), RADIUS=100, CIRCLE=false, MOVE=true, RP_DOWNLOAD=true, LEAVE_REJOIN_MIN=0
 
-## settings.json
-- `server.ip` / `server.port` : server address
-- `server.version` : `"auto"` = detect automatically (any version). Or type a version like `"1.21.4"`
-- `bot-account.username` : bot name
-- `utils.auto-auth.password` : password used for /register and /login
-- `movement.random-walk` : bot roams randomly (`radius` = blocks around spawn, default 100)
-- `movement.circle-walk.enabled` : circle mode (off by default)
-
-Newer servers than the installed mineflayer supports: the bot joins with the newest supported version,
-install ViaVersion + ViaBackwards on the server for this.
+Local: npm install && node index.js
