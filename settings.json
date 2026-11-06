@@ -1,14 +1,14 @@
 {
-  "name": "AFK Bot",
+  "name": "ITS_MK_BOT_01",
   "bot-account": {
-    "username": "SoloCloudHosting",
+    "username": "ITS_MK_BOT_01",
     "password": "",
     "type": "offline"
   },
   "server": {
-    "ip": "solocloud.site",
-    "port": 25565,
-    "version": "1.20.1",
+    "ip": "ITS-FRIEND-ONLY-SMP.aternos.me",
+    "port": 37984,
+    "version": "1.21.11",
     "try-creative": false
   },
   "position": {
@@ -27,9 +27,9 @@
       "sneak": false
     },
     "chat-messages": {
-      "enabled": true,
+      "enabled": false,
       "repeat": true,
-      "repeat-delay": 120,
+      "repeat-delay": 12000000,
       "messages": [
         "I'm a regular player",
         "Subscribe to SoloPlayz!",
