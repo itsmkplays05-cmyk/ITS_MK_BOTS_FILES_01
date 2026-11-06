@@ -1,42 +1,41 @@
-"use strict";
+  const d = config.discord;
+  if (!d || !d.enabled || !d.webhookUrl) return;
+  if (Date.now() - lastDiscordSend < 5000) return;
+  lastDiscordSend = Date.now();
 
-const path = require("path");
-const http = require("http");
-const https = require("https");
-const express = require("express");
-const mineflayer = require("mineflayer");
-const { Movements, pathfinder, goals } = require("mineflayer-pathfinder");
-const { addLog, getLogs } = require("./logger");
-const config = require("./settings.json");
-
-const { GoalBlock, GoalXZ } = goals;
-const move = config.movement || {};
-const num = (v) => typeof v === "number" && Number.isFinite(v);
-
-// ============================================================
-// STATE
-// ============================================================
-const state = {
-  running: true,
-  connected: false,
-  safeMode: !!move["safe-mode"],
-  startTime: Date.now(),
-  connectedAt: null,
-  reconnectAttempts: 0,
-  kicks: 0,
-  lastKick: null,
-  wasThrottled: false,
-};
-
-let bot = null;
-let intervals = [];
-let reconnectTimer = null;
-let connectTimer = null;
-let isReconnecting = false;
-let lastDiscordSend = 0;
+  const url = new URL(d.webhookUrl);
+  const payload = JSON.stringify({
+    username: config.name,
+    embeds: [{ description: content, color, timestamp: new Date().toISOString() }],
+  });
+  const req = https.request(
+    { hostname: url.hostname, path: url.pathname + url.search, method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) } },
+    () => {},
+  );
+  req.on("error", (e) => addLog(`[Discord] ${e.message}`));
+  req.end(payload);
+}
 
 // ============================================================
-// WEB SERVER (dashboard + API)
+// CRASH RECOVERY
 // ============================================================
-const app = express();
-app.use(express.json());
+function recover(label, err) {
+  addLog(`[FATAL] ${label}: ${err && err.message ? err.message : err}`);
+  if (!state.running) return;
+  destroyBot();
+  isReconnecting = false;
+  clearTimers();
+  scheduleReconnect();
+}
+
+process.on("uncaughtException", (err) => recover("Uncaught exception", err));
+process.on("unhandledRejection", (reason) => recover("Unhandled rejection", reason));
+process.on("SIGTERM", () => addLog("[System] SIGTERM ignored"));
+process.on("SIGINT", () => addLog("[System] SIGINT ignored"));
+
+// ============================================================
+// START
+// ============================================================
+addLog(`Minecraft AFK Bot v3.0 | ${config.server.ip}:${config.server.port} | version ${config.server.version || "auto"}`);
+createBot();
