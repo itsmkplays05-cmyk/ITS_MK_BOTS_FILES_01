@@ -1,0 +1,21 @@
+{
+  "username": "GG_BOT",
+  "host": "Deepak_SMP.aternos.me",
+  "port": 38292,
+  "version": false,
+  "auth": "offline",
+  "authPassword": "",
+  "antiAfk": true,
+  "reconnectDelay": 5000,
+  "chatRepeat": true,
+  "chatDelay": 25,
+  "messages": [
+    "/login 2345678",
+    "MADE BY Pipka",
+    "DISCORD SERVER = discord.gg/Jma9yFsqdF",
+    "SERVER OWNERS pipkagamer",
+    "DONT USE XRAY ETC MODE DIRECT BAN",
+    "DON'T ABUSE WITH PLAYERS",
+    "THANKS FOR COME"
+  ]
+}

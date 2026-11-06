@@ -1,0 +1,12 @@
+{
+  "name": "gg-bot",
+  "version": "3.0.0",
+  "main": "bot.js",
+  "scripts": { "start": "node bot.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "mineflayer": "^4.20.1",
+    "mineflayer-pathfinder": "^2.4.5"
+  },
+  "license": "ISC"
+}
