@@ -31,8 +31,7 @@
       "repeat": true,
       "repeat-delay": 120000000,
       "messages": [
-        "I'm a regular player",
-      ]
+        "I'm a regular player"
     },
     "chat-log": true,
     "auto-reconnect": true,
