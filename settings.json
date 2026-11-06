@@ -1,10 +1,10 @@
 {
   "name": "AFK Bot",
   "bot-account": {
-    "username": "ITS_MK_BOT_01",
+    "username": "ITS_BOT_01",
     "password": "",
     "type": "offline"
-  },
+  
   "server": {
     "ip": "ITS-FRIEND-ONLY-SMP.aternos.me",
     "port": 37984,
