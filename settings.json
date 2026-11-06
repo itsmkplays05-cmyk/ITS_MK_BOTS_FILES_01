@@ -6,8 +6,8 @@
     "type": "offline"
   },
   "server": {
-    "ip": "yourserver.aternos.me",
-    "port": 25565,
+    "ip": "ITS-FRIEND-ONLY-SMP.aternos.me",
+    "port": 37984,
     "version": "auto",
     "try-creative": false
   },
@@ -20,7 +20,7 @@
   "utils": {
     "auto-auth": {
       "enabled": true,
-      "password": "AfkBot@123"
+      "password": "AfkBot123"
     },
     "anti-afk": {
       "enabled": true,
@@ -84,12 +84,12 @@
     }
   },
   "chat": {
-    "respond": true
+    "respond": false
   },
   "resource-pack": {
     "enabled": true,
     "download": true,
-    "max-size-mb": 500,
+    "max-size-mb": 5000,
     "timeout-seconds": 120
   }
 }
