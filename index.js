@@ -9,7 +9,7 @@ const { Movements, pathfinder, goals } = require("mineflayer-pathfinder");
 const { addLog, getLogs } = require("./logger");
 const config = require("./settings.json");
 
-const { GoalBlock, GoalNear } = goals;
+const { GoalBlock, GoalXZ } = goals;
 const move = config.movement || {};
 const num = (v) => typeof v === "number" && Number.isFinite(v);
 
@@ -34,3 +34,9 @@ let reconnectTimer = null;
 let connectTimer = null;
 let isReconnecting = false;
 let lastDiscordSend = 0;
+
+// ============================================================
+// WEB SERVER (dashboard + API)
+// ============================================================
+const app = express();
+app.use(express.json());
