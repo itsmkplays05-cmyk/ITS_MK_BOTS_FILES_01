@@ -1,31 +1,27 @@
-// ===== SETTINGS (Railway par Variables se bhi change ho jati hain) =====
+// =====================================================
+//  SIRF YE 4 LINE BADLO (baaki sab pehle se set hai)
+// =====================================================
+const SERVER_IP   = 'yourserver.aternos.me';  // server ka address
+const SERVER_PORT = 25565;                    // port (Aternos me aksar 25565)
+const BOT_NAME    = 'AFK_Bot';                // bot ka naam
+const PASSWORD    = 'BotPass123';             // login/register password
+
+// =====================================================
+//  NEECHE KUCH MAT BADLO (zarurat ho tabhi)
+// =====================================================
 const env = (k, d) => (process.env[k] !== undefined && process.env[k] !== '' ? process.env[k] : d);
 const bool = (v) => String(v).toLowerCase() === 'true';
 
 module.exports = {
-  host: env('MC_HOST', 'yourserver.aternos.me'),
-  port: parseInt(env('MC_PORT', '25565')),
-  username: env('MC_USERNAME', 'AFK_Bot'),
-  auth: env('MC_AUTH', 'offline'),          // offline (cracked) ya microsoft
-  version: env('MC_VERSION', ''),           // khali = server ka version auto-detect (sab versions)
+  host: env('MC_HOST', SERVER_IP),
+  port: parseInt(env('MC_PORT', SERVER_PORT)),
+  username: env('MC_USERNAME', BOT_NAME),
+  password: env('MC_PASSWORD', PASSWORD),
+  auth: 'offline',
+  version: env('MC_VERSION', ''),   // khali = apne aap sahi version
 
-  password: env('MC_PASSWORD', 'BotPass123'), // AuthMe /register aur /login ke liye
-
-  movement: {
-    enabled: bool(env('MOVE', 'true')),     // random movement ON
-    radius: parseInt(env('RADIUS', '100')), // spawn point se max 100 block
-    circle: bool(env('CIRCLE', 'false')),   // circle mode OFF
-    minDelay: 6000,
-    maxDelay: 18000
-  },
-
-  resourcePack: {
-    download: bool(env('RP_DOWNLOAD', 'true')), // server pack ho to download karke accept
-    timeoutMs: 20000,
-    dir: './packs'
-  },
-
-  leaveRejoinMinutes: parseInt(env('LEAVE_REJOIN_MIN', '0')), // 0 = off
-
+  movement: { enabled: true, radius: 100, circle: false, minDelay: 6000, maxDelay: 18000 },
+  resourcePack: { download: true, timeoutMs: 20000, dir: './packs' },
+  leaveRejoinMinutes: 0,
   reconnect: { minDelay: 5000, maxDelay: 120000 }
 };
