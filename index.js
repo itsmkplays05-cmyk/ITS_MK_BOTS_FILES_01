@@ -84,6 +84,10 @@ let lastDiscordSend = 0;
 // ============================================================
 const app = express();
 app.use(express.json());
+app.use((req, res, next) => {
+  res.set("Cache-Control", "no-store"); // never let a proxy/browser cache logs or status
+  next();
+});
 const PORT = process.env.PORT || 5000;
 
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "dashboard.html")));

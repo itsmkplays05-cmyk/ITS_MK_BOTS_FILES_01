@@ -1,5 +1,5 @@
 {
-  "name": "ITS_MK_BOT_01",
+  "name": "AFK Bot",
   "bot-account": {
     "username": "ITS_MK_BOT_01",
     "password": "",
@@ -8,7 +8,7 @@
   "server": {
     "ip": "ITS-FRIEND-ONLY-SMP.aternos.me",
     "port": 37984,
-    "version": "1.21.11",
+    "version": "",
     "try-creative": false
   },
   "position": {
@@ -20,7 +20,7 @@
   "utils": {
     "auto-auth": {
       "enabled": true,
-      "password": "SoloPlayz"
+      "password": "75467458"
     },
     "anti-afk": {
       "enabled": true,
@@ -29,7 +29,7 @@
     "chat-messages": {
       "enabled": false,
       "repeat": true,
-      "repeat-delay": 12000000,
+      "repeat-delay": 120,
       "messages": [
         "I'm a regular player",
         "Subscribe to SoloPlayz!",
@@ -87,6 +87,6 @@
     }
   },
   "chat": {
-    "respond": true
+    "respond": false
   }
 }
