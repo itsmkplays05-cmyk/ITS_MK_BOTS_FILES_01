@@ -1,0 +1,91 @@
+# ==========================================================
+#   GG_BOT  -  SETTINGS  (bahut aasan)
+# ==========================================================
+#  Sirf "=" ke BAAD wali value badlo. Baaki kuch mat chhedo.
+#  on  = chalu      off = band
+#  Jis line ke aage # laga hai wo sirf likhne ke liye hai.
+#  Galti ho jaye to bot crash nahi hoga, default value use karega.
+# ==========================================================
+
+
+# ---------- 1. SERVER (kahan join karna hai) ----------
+BOT_NAME = GG_BOT
+SERVER_IP = Deepak_SMP.aternos.me
+SERVER_PORT = 38292
+
+# auto = server ka jo version hai wahi use hoga (best).
+# Agar problem aaye to yaha version likho, jaise 1.20.4
+SERVER_VERSION = auto
+
+
+# ---------- 2. LOGIN (nLogin / AuthMe wale server ke liye) ----------
+# Server pe /login lagta hai to password likho. Khali chhodo = login band.
+LOGIN_PASSWORD = 2345678
+
+
+# ---------- 3. GHOOMNA (movement) ----------
+# on = bot spawn ke aaspaas random ghoomega
+RANDOM_WALK = on
+
+# Spawn point se kitne block door tak ja sakta hai
+WALK_RADIUS = 100
+
+# Join hone ke kitne second baad ghoomna shuru kare
+WALK_START_DELAY = 10
+
+# on = bot beech beech mein haath hilayega (AFK kick se bachne ke liye)
+ANTI_AFK = on
+
+
+# ---------- 4. CHAT MESSAGES ----------
+# on = niche wale MESSAGE bot chat mein bhejega
+CHAT_MESSAGES = on
+
+# Har message ke beech kitne second ka gap
+CHAT_DELAY = 25
+
+# Jitne chahiye utne MESSAGE line add/hata sakte ho
+MESSAGE = MADE BY Pipka
+MESSAGE = DISCORD SERVER = discord.gg/Jma9yFsqdF
+MESSAGE = SERVER OWNERS pipkagamer
+MESSAGE = DONT USE XRAY ETC MODE DIRECT BAN
+MESSAGE = DON'T ABUSE WITH PLAYERS
+MESSAGE = THANKS FOR COME
+
+
+# ---------- 5. LEAVE aur REJOIN ----------
+# Bot kitne minute server mein rahe, phir khud leave karke wapas aaye.
+# 0 = kabhi leave nahi karega
+STAY_MINUTES = 30
+
+# Leave karne ke baad kitne second ruk ke wapas join kare
+LEAVE_WAIT = 10
+
+# Kick ya connection tootne par kitne second mein wapas join kare
+REJOIN_WAIT = 3
+
+
+# ---------- 6. DISCORD LOGS ----------
+# Discord channel > Edit Channel > Integrations > Webhooks > Copy URL
+# Yaha URL paste karo. Khali = Discord band.
+# (Tip: GitHub public hai to URL yaha mat daalo, Railway Variables mein
+#  DISCORD_WEBHOOK naam se daalo.)
+DISCORD_WEBHOOK =
+
+# Discord mein bot ka naam
+DISCORD_NAME = GG_BOT Logs
+
+# on = server ki saari chat aur messages Discord mein bhejo
+DISCORD_CHAT = on
+
+# on = koi player join / leave ho to bhejo
+DISCORD_PLAYERS = on
+
+# on = bot ka join, kick, disconnect, reconnect, error, death sab bhejo
+DISCORD_BOT_EVENTS = on
+
+# on = bot kahan ghoom raha hai wo bhi bhejo (spam ho sakta hai)
+DISCORD_MOVEMENT = off
+
+# Logs ka time kis time zone mein dikhe
+TIMEZONE = Asia/Kolkata
