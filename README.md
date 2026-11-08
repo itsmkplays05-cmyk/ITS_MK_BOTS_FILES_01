@@ -13,7 +13,7 @@ ITS_GG_01  ->  ITS_GG_02  ->  ITS_GG_03  ->  ITS_GG_01  ->  ...   (loop, hamesha
 |---|---|
 | Bot rotation | 3 ghante baad agla bot **pehle join** karta hai, phir purana nikalta hai. Server kabhi khali nahi hota |
 | Auto version detect | Server ka version bot khud pehchanta hai. Kuch likhna nahi padta (`SERVER_VERSION = auto`) |
-| Connection fix | Reconnect delay 5s, 10s, 20s, 40s... badhta hai. Kick ki wajah padhkar sahi time wait karta hai (throttle, whitelist, ban, full) |
+| Connection fix | Reconnect delay 5s, 10s, 20s tak badhta hai. Kick ki wajah padhkar sahi time wait karta hai (throttle, whitelist, ban, full) |
 | Dead connection detect | Server se 75 sec data na aaye to bot khud reconnect kar leta hai |
 | Server offline check | Aternos band ya starting ho to bot chup-chaap wait karta hai aur server on hote hi join ho jata hai |
 | Random walk | Spawn point se maximum **100 block** ke andar idhar-udhar ghumta hai, circle walk nahi |
@@ -61,6 +61,24 @@ ITS_GG_01  ->  ITS_GG_02  ->  ITS_GG_03  ->  ITS_GG_01  ->  ...   (loop, hamesha
 
 Settings badalni ho to GitHub par `settings.txt` edit karo, Railway apne aap redeploy karega. Ya Railway **Variables** mein same naam se variable daalo (jaise `ROTATE_HOURS = 2`), wo `settings.txt` se upar chalta hai.
 
+## Join nahi ho raha? Pehle ye dekho (Aternos)
+
+Bot sirf tab join kar sakta hai jab server **ON** ho. Aternos server ko bot khud start nahi kar sakta, aur Aternos khali server ko takriban 1 minute baad band kar deta hai.
+
+1. Aternos panel kholo, server ko **Start** karo, jab tak status **Online** (green) na ho.
+2. Panel mein dikha address aur port `SERVER_IP` / `SERVER_PORT` se match karo. Port badal gaya ho to `settings.txt` mein theek karo.
+3. Server online hote hi bot 15 sec ke andar khud join ho jata hai. Kuch aur karne ki zaroorat nahi.
+
+Logs ye batate hain:
+
+| Log line | Matlab |
+|---|---|
+| `server is not answering ... press START` | Server band ya starting hai. Panel se start karo |
+| `server answers now - joining` | Server on ho gaya, bot join kar raha hai |
+| `join stuck at stage "none"` | Server se koi jawab nahi aaya (band, starting, ya IP/port galat) |
+| `join stuck at stage "tcp"` | Server se judaa par login poora nahi hua (server abhi load ho raha hai) |
+| `join stuck at stage "login"` | Login hua par world load nahi hua |
+
 ## Server side checklist
 
 - **Whitelist ON** hai to `ITS_GG_02` aur `ITS_GG_03` ko bhi whitelist karo, warna rotation nahi hoga (bot 1 ruka rahega).
@@ -97,11 +115,11 @@ version mode: auto-detect | mineflayer supports up to 26.1
 | `ANTI_AFK` | Haath hilana aur sir ghumana | on |
 | `CHAT_MESSAGES` | Auto chat messages | off |
 | `STAY_MINUTES`, `LEAVE_WAIT` | Itne minute baad bot 10 sec ke liye nikalkar wapas aata hai (0 = kabhi nahi) | 30 / 10 |
-| `REJOIN_WAIT`, `REJOIN_MAX` | Reconnect delay shuruat aur maximum (seconds) | 5 / 60 |
+| `REJOIN_WAIT`, `REJOIN_MAX` | Reconnect delay shuruat aur maximum (seconds) | 5 / 20 |
 | `JOIN_TIMEOUT` | Join attempt ka time limit (seconds) | 60 |
 | `STALE_TIMEOUT` | Itne sec data na aaye to reconnect (0 = off) | 75 |
 | `PING_BEFORE_JOIN` | Join se pehle check ki server on hai | on |
-| `OFFLINE_RETRY` | Server band ho to kitne sec baad dobara check | 30 |
+| `OFFLINE_RETRY` | Server band ho to kitne sec baad dobara check | 15 |
 | `STATUS_PAGE` | Dashboard on/off | on |
 | `DISCORD_*` | Discord webhook aur kya bhejna hai | webhook khali |
 

@@ -93,9 +93,10 @@ LEAVE_WAIT = 10
 #  7. CONNECTION STABILITY   (fixes "connection lost" problems)
 # ---------------------------------------------------------------------
 # First reconnect delay in seconds. It doubles after every failed attempt
-# (5, 10, 20, 40 ...) until REJOIN_MAX, then resets after a good join.
+# (5, 10, 20 ...) until REJOIN_MAX, then resets after a good join.
+# Keep REJOIN_MAX low: Aternos stops an empty server after about a minute.
 REJOIN_WAIT = 5
-REJOIN_MAX  = 60
+REJOIN_MAX  = 20
 
 # A join attempt that takes longer than this many seconds is cancelled.
 JOIN_TIMEOUT = 60
@@ -110,7 +111,7 @@ STALE_TIMEOUT = 75
 PING_BEFORE_JOIN = on
 
 # Seconds between checks while the server is offline / starting.
-OFFLINE_RETRY = 30
+OFFLINE_RETRY = 15
 
 
 # ---------------------------------------------------------------------

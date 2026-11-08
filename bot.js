@@ -55,11 +55,11 @@ const DEFAULTS = {
 
   // connection stability
   REJOIN_WAIT: 5,          // first reconnect delay (seconds), doubles after every failure
-  REJOIN_MAX: 60,          // reconnect delay never goes above this (seconds)
+  REJOIN_MAX: 20,          // reconnect delay never goes above this (seconds)
   JOIN_TIMEOUT: 60,        // give up a join attempt after this many seconds
   STALE_TIMEOUT: 75,       // no data from the server for this long = dead connection (0 = off)
   PING_BEFORE_JOIN: true,  // check that the server is up before joining (saves spam)
-  OFFLINE_RETRY: 30,       // wait this long when the server is offline / starting (seconds)
+  OFFLINE_RETRY: 15,       // wait this long when the server is offline / starting (seconds)
 
   DISCORD_WEBHOOK: '',
   DISCORD_NAME: 'GG_BOT Logs',
@@ -273,7 +273,7 @@ function retryPlan(text, fails) {
   let wait = Math.min(S.REJOIN_MAX, S.REJOIN_WAIT * Math.pow(2, Math.max(0, fails - 1)));
   let note = '', versionProblem = false;
   if (/throttl|too (fast|quickly)|wait before reconnect/.test(t)) {
-    wait = Math.max(wait, 20); note = 'server is throttling fast reconnects';
+    wait = Math.max(wait, 15); note = 'server is throttling fast reconnects';
   } else if (/banned|ban reason|you are ban/.test(t)) {
     wait = Math.max(wait, 300); note = 'this bot name is BANNED on the server (unban it or change the name)';
   } else if (/white-?list/.test(t)) {
@@ -553,11 +553,17 @@ class Worker {
         // Safety valve: every 5th check try a real join anyway (in case the ping check is wrong).
         if (this.offlineStreak % 5 !== 0) {
           if (this.offlineStreak === 1 || this.offlineStreak % 10 === 0) {
-            this.log(`server is offline or starting${p.error ? ' (' + p.error + ')' : ''} - waiting (checks every ${S.OFFLINE_RETRY}s, start it from your host panel)`, 'warn');
+            const tip = /aternos/i.test(S.SERVER_IP)
+              ? 'open your Aternos panel and press START (a bot cannot start Aternos by itself)'
+              : 'start it from your host panel';
+            this.log(`server is not answering${p.error ? ' (' + p.error + ')' : ''} - waiting, checking every ${S.OFFLINE_RETRY}s. ${tip}`, 'warn');
           }
           return this.scheduleRejoin(S.OFFLINE_RETRY, 'server offline');
         }
-      } else this.offlineStreak = 0;
+      } else {
+        if (this.offlineStreak > 0) this.log(`server answers now${p.version ? ' (' + p.version + ')' : ''} - joining`, 'info');
+        this.offlineStreak = 0;
+      }
     }
     this.connect();
   }
@@ -588,12 +594,14 @@ class Worker {
     const id = this.session;
     let ready = false;
     let lastPacket = Date.now();
+    let stage = 'none'; // none -> tcp (connected) -> login (login packet received) -> spawn
 
     guardPackets(b, this.name);
     b.loadPlugin(pathfinder);
 
     // TCP keep-alive + "last data seen" tracking (detects half-dead connections).
     b._client.once('connect', () => {
+      if (stage === 'none') stage = 'tcp';
       try { b._client.socket.setKeepAlive(true, 15000); b._client.socket.setNoDelay(true); } catch (_) {}
     });
     b._client.on('packet', () => { lastPacket = Date.now(); });
@@ -642,8 +650,14 @@ class Worker {
     b.physicsEnabled = false;
     if (b.physics) b.physics.enabled = false;
 
+    b.once('login', () => { stage = 'login'; });
     this.timers.push(setTimeout(() => {
-      if (!this.joinedAt) this.handleEnd(b, `join timeout ${S.JOIN_TIMEOUT}s`);
+      if (this.joinedAt) return;
+      const why = stage === 'login' ? 'logged in but never spawned (world still loading)'
+        : stage === 'tcp' ? 'connected, but the server never finished the login (still starting, or very laggy)'
+        : 'no answer from the server (offline, still starting, or wrong IP / port)';
+      this.log(`join stuck at stage "${stage}": ${why}`, 'warn');
+      this.handleEnd(b, `join timeout ${S.JOIN_TIMEOUT}s`);
     }, S.JOIN_TIMEOUT * 1000));
 
     b.once('spawn', () => {
@@ -885,7 +899,7 @@ class Rotator {
     const nxt = this.enabled
       ? ` | next switch -> ${this.nextBot().name} in ${fmtDur(this.nextSwitchAt - now)} (at ${clockAt(this.nextSwitchAt)})`
       : ' | rotation off';
-    log(`${w.name} ${state}${nxt} | switches done: ${this.switches}`, 'status');
+    log(`${w.name} ${state}${nxt} | switches done: ${this.switches} | server: ${(probe.result && probe.result.state) || 'unknown'}`, 'status');
   }
 
   snapshot() {
