@@ -1,7 +1,7 @@
 {
   "username": "GG_BOT",
-  "host": "Deepak_SMP.aternos.me",
-  "port": 38292,
+  "host": "ITS-FRIEND-ONLY-SMP.aternos.me",
+  "port": 37984,
   "version": false,
   "auth": "offline",
   "authPassword": "2345678",
@@ -11,7 +11,7 @@
   "sessionMinutes": 30,
   "leaveWait": 10000,
   "reconnectDelay": 3000,
-  "chatRepeat": true,
+  "chatRepeat": false
   "chatDelay": 25,
   "messages": [
     "MADE BY Pipka",
