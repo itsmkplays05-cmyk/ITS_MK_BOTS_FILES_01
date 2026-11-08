@@ -264,6 +264,34 @@ function start() {
 
   guardPackets(b);
   b.loadPlugin(pathfinder);
+
+  // Self-heal: some server/library version combos give a NaN position -> bad move packets / disconnects.
+  const finite3 = v => !!v && Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z);
+  let lastGood = null, healLogged = 0, tpLogged = false;
+  const heal = () => {
+    const e = b.entity;
+    if (!e) return false;
+    if (finite3(e.position)) lastGood = e.position.clone();
+    else if (lastGood) {
+      e.position.set(lastGood.x, lastGood.y, lastGood.z);
+      if (healLogged++ % 50 === 0) log('fixed invalid position', 'warn');
+    }
+    if (!finite3(e.velocity)) e.velocity.set(0, 0, 0);
+    if (!Number.isFinite(e.yaw)) e.yaw = 0;
+    if (!Number.isFinite(e.pitch)) e.pitch = 0;
+    return finite3(e.position);
+  };
+  b._client.on('position', p => { // runs after the library's own handler
+    if (!tpLogged) { tpLogged = true; log(`server teleport x=${p.x} y=${p.y} z=${p.z}`); }
+    const e = b.entity;
+    if (!e) return;
+    if (!finite3(e.position) && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)) {
+      e.position.set(p.x, p.y, p.z);
+      log('position repaired from server teleport', 'warn');
+    }
+    heal();
+  });
+  b.on('physicsTick', heal);
   b.physicsEnabled = false;
   if (b.physics) b.physics.enabled = false;
 
@@ -278,21 +306,23 @@ function start() {
     const pw = S.LOGIN_PASSWORD;
     const auth = { done: !pw, sent: 0, last: 0, login: false, register: false, walk: false };
 
-    const beginWalk = () => {
+    const beginWalk = (n = 0) => {
       if (session !== id || !b.entity) return;
-      if (!Number.isFinite(b.entity.position.x) || !Number.isFinite(b.entity.position.y)) {
-        log('bad spawn position, rejoining', 'warn');
-        return b.quit();
+      if (heal()) {
+        b.physicsEnabled = true;
+        if (b.physics) b.physics.enabled = true;
+        if (S.RANDOM_WALK) startRoaming(b, id);
+        return;
       }
-      b.physicsEnabled = true;
-      if (b.physics) b.physics.enabled = true;
-      if (S.RANDOM_WALK) startRoaming(b, id);
+      if (n === 0) log('waiting for a valid position', 'warn');
+      if (n < 15) timers.push(setTimeout(() => beginWalk(n + 1), 2000));
+      else log('position still invalid - staying in place (not disconnecting)', 'warn');
     };
     const scheduleWalk = () => {
       if (auth.walk) return;
       auth.walk = true;
       const at = Math.max(spawnT + S.WALK_START_DELAY * 1000, Date.now() + 3000);
-      timers.push(setTimeout(beginWalk, Math.max(at - Date.now(), 0)));
+      timers.push(setTimeout(() => beginWalk(0), Math.max(at - Date.now(), 0)));
     };
     const say = (cmd) => {
       if (auth.done || auth.sent >= 6) return;
