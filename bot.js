@@ -143,20 +143,21 @@ function log(msg, kind = 'info') {
 
 // ============================ HELPERS ============================
 function reasonText(r) {
+  const skip = new Set(['type', 'color', 'bold', 'italic', 'underlined', 'strikethrough', 'obfuscated', 'font', 'clickEvent', 'hoverEvent', 'insertion']);
+  const parts = [];
+  const walk = o => {
+    if (o == null) return;
+    if (typeof o === 'string') { parts.push(o); return; }
+    if (typeof o === 'number' || typeof o === 'boolean') return;
+    if (Array.isArray(o)) { o.forEach(walk); return; }
+    if (typeof o === 'object') for (const k of Object.keys(o)) if (!skip.has(k)) walk(o[k]);
+  };
   try {
-    if (r == null) return '';
-    if (typeof r === 'string') { try { return reasonText(JSON.parse(r)); } catch (_) { return r; } }
-    if (typeof r === 'object') {
-      let out = '';
-      if (r.text) out += r.text;
-      if (r.translate) out += r.translate;
-      if (r.value !== undefined) out += reasonText(r.value);
-      if (Array.isArray(r.extra)) out += r.extra.map(reasonText).join('');
-      if (Array.isArray(r.with)) out += ' ' + r.with.map(reasonText).join(' ');
-      return out || JSON.stringify(r).slice(0, 300);
-    }
-    return String(r);
-  } catch (_) { return 'unknown'; }
+    if (typeof r === 'string') { try { walk(JSON.parse(r)); } catch (_) { parts.push(r); } }
+    else walk(r);
+  } catch (_) {}
+  const out = parts.join('').replace(/§./g, '').trim();
+  return out || 'no reason given';
 }
 function withTimeout(promise, ms) {
   let t;
@@ -186,7 +187,7 @@ function guardPackets(b) {
 
 // ============================ BOT ============================
 let bot = null, timers = [], session = 0, retrying = false, plannedLeave = false, shuttingDown = false;
-let attempts = 0, failsInRow = 0, joinedAt = 0;
+let attempts = 0, failsInRow = 0, joinedAt = 0, forcedVersion = null;
 
 function clearAll() {
   session++;
@@ -245,11 +246,11 @@ function startRoaming(b, id) {
 
 function start() {
   attempts++;
-  log(`connecting to ${S.SERVER_IP}:${S.SERVER_PORT} as ${S.BOT_NAME} (version ${S.VERSION || 'auto'}) try #${attempts}`);
+  log(`connecting to ${S.SERVER_IP}:${S.SERVER_PORT} as ${S.BOT_NAME} (version ${forcedVersion || S.VERSION || 'auto'}) try #${attempts}`);
   let b;
   try {
     b = mineflayer.createBot({
-      host: S.SERVER_IP, port: S.SERVER_PORT, username: S.BOT_NAME, version: S.VERSION, auth: 'offline',
+      host: S.SERVER_IP, port: S.SERVER_PORT, username: S.BOT_NAME, version: forcedVersion || S.VERSION, auth: 'offline',
       checkTimeoutInterval: 120000, // laggy servers won't cause false "timed out"
       connectTimeout: 30000
     });
@@ -273,22 +274,56 @@ function start() {
     log(`joined server (version ${b.version})`, 'join');
     timers.push(setTimeout(() => { ready = true; }, 4000));
 
-    if (S.LOGIN_PASSWORD) {
-      timers.push(setTimeout(() => {
-        b.chat(`/register ${S.LOGIN_PASSWORD} ${S.LOGIN_PASSWORD}`);
-        b.chat(`/login ${S.LOGIN_PASSWORD}`);
-        log('login command sent');
-      }, 1500));
-    }
-    timers.push(setTimeout(() => {
-      if (!b.entity || !Number.isFinite(b.entity.position.x) || !Number.isFinite(b.entity.position.y)) {
+    const spawnT = Date.now();
+    const pw = S.LOGIN_PASSWORD;
+    const auth = { done: !pw, sent: 0, last: 0, login: false, register: false, walk: false };
+
+    const beginWalk = () => {
+      if (session !== id || !b.entity) return;
+      if (!Number.isFinite(b.entity.position.x) || !Number.isFinite(b.entity.position.y)) {
         log('bad spawn position, rejoining', 'warn');
         return b.quit();
       }
       b.physicsEnabled = true;
       if (b.physics) b.physics.enabled = true;
       if (S.RANDOM_WALK) startRoaming(b, id);
-    }, S.WALK_START_DELAY * 1000));
+    };
+    const scheduleWalk = () => {
+      if (auth.walk) return;
+      auth.walk = true;
+      const at = Math.max(spawnT + S.WALK_START_DELAY * 1000, Date.now() + 3000);
+      timers.push(setTimeout(beginWalk, Math.max(at - Date.now(), 0)));
+    };
+    const say = (cmd) => {
+      if (auth.done || auth.sent >= 6) return;
+      const wait = 2500 - (Date.now() - auth.last);
+      if (wait > 0) { timers.push(setTimeout(() => say(cmd), wait + 100)); return; }
+      auth.sent++; auth.last = Date.now();
+      try { b.chat(cmd); log('sent ' + cmd.split(' ')[0]); } catch (_) {}
+    };
+    const doLogin = () => { if (!auth.login) { auth.login = true; say(`/login ${pw}`); } };
+    const doRegister = () => { if (!auth.register) { auth.register = true; say(`/register ${pw} ${pw}`); } };
+
+    if (pw) {
+      b._authMsg = (text) => {
+        if (auth.done) return;
+        const t = text.toLowerCase();
+        const bad = /(wrong|incorrect|invalid|failed|not |already|error|fail)/.test(t);
+        if (!bad && /(success|logged in|authenticated|welcome back|now logged)/.test(t)) {
+          auth.done = true; log('login OK'); return scheduleWalk();
+        }
+        if (/already (registered|have an account)|is registered/.test(t)) return doLogin();
+        const wantsLogin = /\/?log ?in/.test(t), wantsReg = /register/.test(t);
+        if (wantsLogin && wantsReg) { doLogin(); timers.push(setTimeout(doRegister, 4000)); }
+        else if (wantsLogin) doLogin();
+        else if (wantsReg) doRegister();
+      };
+      timers.push(setTimeout(doLogin, 6000));          // no prompt seen: try login
+      timers.push(setTimeout(doRegister, 11000));      // still nothing: try register
+      timers.push(setTimeout(() => {                   // stop waiting, carry on
+        if (!auth.done) { auth.done = true; log('login not confirmed, continuing', 'warn'); scheduleWalk(); }
+      }, 22000));
+    } else scheduleWalk();
 
     if (S.ANTI_AFK) timers.push(setInterval(() => { try { b.swingArm('right'); } catch (_) {} }, 20000));
 
@@ -311,6 +346,7 @@ function start() {
   b.on('messagestr', (msg, pos) => {
     if (pos === 'game_info' || !msg || !msg.trim()) return;
     log(msg, 'chat');
+    if (b._authMsg) b._authMsg(msg);
   });
   b.on('playerJoined', p => { if (ready && p.username !== b.username) log(`${p.username} joined`, 'player_join'); });
   b.on('playerLeft', p => { if (ready && p.username !== b.username) log(`${p.username} left`, 'player_leave'); });
@@ -318,6 +354,10 @@ function start() {
   b.on('kicked', r => log(`kicked: ${reasonText(r)}`, 'kick'));
   b.on('error', err => {
     log(`${err.code ? err.code + ' ' : ''}${err.message}`, 'error');
+    if (!joinedAt && !forcedVersion && /not supported|unsupported/i.test(err.message) && mineflayer.latestSupportedVersion) {
+      forcedVersion = mineflayer.latestSupportedVersion;
+      log(`server version not supported, trying ${forcedVersion}`, 'warn');
+    }
     timers.push(setTimeout(() => { if (!joinedAt) handleEnd(b, err.code || err.message); }, 3000));
   });
   b.on('end', reason => handleEnd(b, reason || 'connection ended'));
