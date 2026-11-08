@@ -1,13 +1,9 @@
 {
   "name": "gg-bot",
-  "version": "5.1.0",
+  "version": "6.0.0",
   "main": "bot.js",
-  "scripts": {
-    "start": "node bot.js"
-  },
-  "engines": {
-    "node": ">=22"
-  },
+  "scripts": { "start": "node bot.js" },
+  "engines": { "node": ">=18" },
   "dependencies": {
     "minecraft-data": "^3.60.0",
     "mineflayer": "^4.20.1",

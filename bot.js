@@ -1,21 +1,21 @@
+const fs = require('fs');
+const path = require('path');
 const mineflayer = require('mineflayer');
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 
-// ============================ SETTINGS READER (settings.txt) ============================
-const fs = require('fs');
-const path = require('path');
-
+// ============================ SETTINGS ============================
+// Works even if settings.txt is missing (built-in defaults below).
 const DEFAULTS = {
-  BOT_NAME: 'GG_BOT',
-  SERVER_IP: 'localhost',
-  SERVER_PORT: 25565,
+  BOT_NAME: 'ITS_GG_BOT',
+  SERVER_IP: 'ITS-FRIEND-ONLY-SMP.aternos.me',
+  SERVER_PORT: 37984,
   SERVER_VERSION: 'auto',
-  LOGIN_PASSWORD: '',
+  LOGIN_PASSWORD: '2345678',
   RANDOM_WALK: true,
   WALK_RADIUS: 100,
   WALK_START_DELAY: 10,
   ANTI_AFK: true,
-  CHAT_MESSAGES: true,
+  CHAT_MESSAGES: false,
   CHAT_DELAY: 25,
   STAY_MINUTES: 30,
   LEAVE_WAIT: 10,
@@ -28,61 +28,63 @@ const DEFAULTS = {
   DISCORD_MOVEMENT: false,
   TIMEZONE: 'Asia/Kolkata'
 };
-const ON = ['on', 'true', 'yes', 'y', '1', 'haan', 'ha'];
-const OFF = ['off', 'false', 'no', 'n', '0', 'nahi', 'band'];
+const DEFAULT_MESSAGES = [
+  'MADE BY Pipka', 'DISCORD SERVER = discord.gg/Jma9yFsqdF', 'SERVER OWNERS pipkagamer',
+  'DONT USE XRAY ETC MODE DIRECT BAN', "DON'T ABUSE WITH PLAYERS", 'THANKS FOR COME'
+];
+const ON = ['on', 'true', 'yes', '1'];
+const OFF = ['off', 'false', 'no', '0'];
 
-function load(file = path.join(__dirname, 'settings.txt'), env = process.env) {
+function loadSettings() {
   const S = { ...DEFAULTS, MESSAGE: [] };
   const warnings = [];
-
   const apply = (key, val, where) => {
     const def = DEFAULTS[key];
     if (typeof def === 'boolean') {
       const v = val.toLowerCase();
       if (ON.includes(v)) S[key] = true;
       else if (OFF.includes(v)) S[key] = false;
-      else warnings.push(`${where}: ${key} ke liye "on" ya "off" likho (mila: "${val}")`);
+      else warnings.push(`${where}: ${key} must be on or off`);
     } else if (typeof def === 'number') {
       const n = Number(val);
       if (val !== '' && Number.isFinite(n) && n >= 0) S[key] = n;
-      else warnings.push(`${where}: ${key} ke liye number likho (mila: "${val}")`);
+      else warnings.push(`${where}: ${key} must be a number`);
     } else S[key] = val;
   };
 
-  let text = '';
-  try { text = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''); }
-  catch (_) { warnings.push('settings.txt file nahi mili - default settings use ho rahi hain'); }
+  let text = null;
+  try { text = fs.readFileSync(path.join(__dirname, 'settings.txt'), 'utf8').replace(/^\uFEFF/, ''); }
+  catch (_) { warnings.push('settings.txt not found, using defaults'); }
 
-  text.split(/\r?\n/).forEach((raw, i) => {
-    const line = raw.trim();
-    if (!line || line.startsWith('#')) return;
-    const eq = line.indexOf('=');
-    if (eq < 1) { warnings.push(`Line ${i + 1}: "=" nahi mila, ye line ignore ki`); return; }
-    const key = line.slice(0, eq).trim().toUpperCase().replace(/\s+/g, '_');
-    const val = line.slice(eq + 1).trim().replace(/^(["'])(.*)\1$/, '$2');
-    if (key === 'MESSAGE') { if (val) S.MESSAGE.push(val); return; }
-    if (!(key in DEFAULTS)) { warnings.push(`Line ${i + 1}: "${key}" naam galat hai, ignore ki`); return; }
-    apply(key, val, `Line ${i + 1}`);
-  });
+  if (text !== null) {
+    text.split(/\r?\n/).forEach((raw, i) => {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) return;
+      const eq = line.indexOf('=');
+      if (eq < 1) { warnings.push(`line ${i + 1} ignored (no "=")`); return; }
+      const key = line.slice(0, eq).trim().toUpperCase().replace(/\s+/g, '_');
+      const val = line.slice(eq + 1).trim().replace(/^(["'])(.*)\1$/, '$2');
+      if (key === 'MESSAGE') { if (val) S.MESSAGE.push(val); return; }
+      if (!(key in DEFAULTS)) { warnings.push(`line ${i + 1}: unknown setting ${key}`); return; }
+      apply(key, val, `line ${i + 1}`);
+    });
+  } else S.MESSAGE = [...DEFAULT_MESSAGES];
 
-  // Railway Variables override the file (same names)
-  for (const key of Object.keys(DEFAULTS)) {
-    if (env[key] !== undefined && env[key] !== '') apply(key, String(env[key]).trim(), 'Railway Variable');
+  for (const key of Object.keys(DEFAULTS)) { // Railway Variables override
+    const v = process.env[key];
+    if (v !== undefined && v !== '') apply(key, String(v).trim(), 'variable');
   }
-
   S.VERSION = /^(auto|latest|)$/i.test(S.SERVER_VERSION) ? false : S.SERVER_VERSION;
   S.SERVER_PORT = Math.floor(S.SERVER_PORT) || 25565;
   return { S, warnings };
 }
-
-
-const { S, warnings } = load();
+const { S, warnings } = loadSettings();
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// ============================ LOGGING + DISCORD ============================
-const ICON = {
-  info: 'ℹ️', chat: '💬', join: '✅', leave: '🚪', kick: '🥾', error: '❌',
-  warn: '⚠️', move: '🚶', player_join: '🟢', player_leave: '🔴', reconnect: '🔄', death: '💀'
+// ============================ LOGS + DISCORD ============================
+const TAG = {
+  info: 'INFO', chat: 'CHAT', join: 'JOIN', leave: 'LEAVE', kick: 'KICK', error: 'ERROR',
+  warn: 'WARN', move: 'MOVE', player_join: 'PLAYER+', player_leave: 'PLAYER-', reconnect: 'RECONNECT', death: 'DEATH'
 };
 function stamp() {
   try { return new Date().toLocaleTimeString('en-GB', { timeZone: S.TIMEZONE }); }
@@ -115,9 +117,9 @@ async function post(text) {
         await sleep(((j.retry_after || 2) * 1000) + 300);
         continue;
       }
-      if (!r.ok) console.log(`[Discord] webhook error ${r.status} (URL check karo)`);
+      if (!r.ok) console.log(`[${stamp()}] WARN Discord webhook error ${r.status}`);
       return;
-    } catch (err) { await sleep(2000); }
+    } catch (_) { await sleep(2000); }
   }
 }
 async function flush() {
@@ -133,9 +135,8 @@ async function flush() {
     }
   } finally { sending = false; }
 }
-
 function log(msg, kind = 'info') {
-  const line = `[${stamp()}] ${ICON[kind] || ''} ${msg}`;
+  const line = `[${stamp()}] ${TAG[kind] || 'INFO'} ${msg}`;
   console.log(line);
   if (allowedOnDiscord(kind)) toDiscord(line);
 }
@@ -144,9 +145,7 @@ function log(msg, kind = 'info') {
 function reasonText(r) {
   try {
     if (r == null) return '';
-    if (typeof r === 'string') {
-      try { return reasonText(JSON.parse(r)); } catch (_) { return r; }
-    }
+    if (typeof r === 'string') { try { return reasonText(JSON.parse(r)); } catch (_) { return r; } }
     if (typeof r === 'object') {
       let out = '';
       if (r.text) out += r.text;
@@ -164,8 +163,7 @@ function withTimeout(promise, ms) {
   return Promise.race([promise, new Promise((_, rej) => { t = setTimeout(() => rej(new Error('timeout')), ms); })])
     .finally(() => clearTimeout(t));
 }
-
-// Blocks broken (NaN / out of range) movement packets = no "Invalid move player packet" kicks.
+// Drops broken (NaN / out of range) movement packets -> no "Invalid move player packet" kick.
 function guardPackets(b) {
   const c = b._client;
   const orig = c.write.bind(c);
@@ -175,7 +173,7 @@ function guardPackets(b) {
     if (names.has(name) && params) {
       for (const k of ['x', 'y', 'z']) {
         if (k in params && (!Number.isFinite(params[k]) || Math.abs(params[k]) > 2.9e7)) {
-          if (++blocked % 20 === 1) log(`Kharab movement packet roka (${k}=${params[k]})`, 'warn');
+          if (++blocked % 20 === 1) log(`blocked bad ${name} packet (${k}=${params[k]})`, 'warn');
           return;
         }
       }
@@ -187,24 +185,21 @@ function guardPackets(b) {
 }
 
 // ============================ BOT ============================
-let bot = null, timers = [], session = 0, retrying = false, plannedLeave = false;
-let shuttingDown = false;
-let joins = 0, failsInRow = 0, joinedAt = 0;
+let bot = null, timers = [], session = 0, retrying = false, plannedLeave = false, shuttingDown = false;
+let attempts = 0, failsInRow = 0, joinedAt = 0;
 
 function clearAll() {
   session++;
   timers.forEach(t => { clearInterval(t); clearTimeout(t); });
   timers = [];
 }
-
 function scheduleRejoin(seconds, why) {
   if (retrying || shuttingDown) return;
   retrying = true;
   clearAll();
-  log(`Reconnecting ${seconds}s mein... (${why})`, 'reconnect');
+  log(`reconnecting in ${seconds}s (${why})`, 'reconnect');
   setTimeout(() => { retrying = false; start(); }, seconds * 1000);
 }
-
 function handleEnd(b, why) {
   if (b !== bot || b._done) return;
   b._done = true;
@@ -212,13 +207,13 @@ function handleEnd(b, why) {
   const stayed = joinedAt ? Math.round((Date.now() - joinedAt) / 1000) : 0;
   if (plannedLeave) {
     plannedLeave = false;
-    log(`Bot ne leave kiya, ${S.LEAVE_WAIT}s baad wapas aayega`, 'leave');
+    log(`left server, rejoin in ${S.LEAVE_WAIT}s`, 'leave');
     return scheduleRejoin(S.LEAVE_WAIT, 'timed leave');
   }
-  if (joinedAt) { failsInRow = 0; log(`Connection tut gaya (${why}) - server mein ${stayed}s raha`, 'leave'); }
-  else { failsInRow++; log(`Join nahi ho paya (${why}) - server band ya busy ho sakta hai`, 'warn'); }
+  if (joinedAt) { failsInRow = 0; log(`connection lost: ${why} (was online ${stayed}s)`, 'leave'); }
+  else { failsInRow++; log(`could not join: ${why}`, 'warn'); }
   joinedAt = 0;
-  const extra = failsInRow > 2 ? Math.min((failsInRow - 2) * 5, 30) : 0; // server offline = thoda ruk ke try
+  const extra = failsInRow > 2 ? Math.min((failsInRow - 2) * 5, 30) : 0;
   scheduleRejoin(S.REJOIN_WAIT + extra, why);
 }
 
@@ -229,8 +224,7 @@ function startRoaming(b, id) {
   mv.canDig = false; mv.allowParkour = false; mv.allow1by1towers = false;
   b.pathfinder.setMovements(mv);
   b.pathfinder.thinkTimeout = 4000;
-  log(`Ghoomna shuru - spawn (${spawn.x.toFixed(0)}, ${spawn.y.toFixed(0)}, ${spawn.z.toFixed(0)}) se ${R} block radius`, 'move');
-
+  log(`walking within ${R} blocks of spawn (${spawn.x.toFixed(0)}, ${spawn.y.toFixed(0)}, ${spawn.z.toFixed(0)})`, 'move');
   (async () => {
     while (session === id && b.entity) {
       try {
@@ -239,25 +233,29 @@ function startRoaming(b, id) {
         let tz = p.z + (Math.random() * 2 - 1) * 30;
         const dx = tx - spawn.x, dz = tz - spawn.z, d = Math.hypot(dx, dz);
         if (d > R) { tx = spawn.x + dx / d * R; tz = spawn.z + dz / d * R; }
-        log(`Ja raha hai -> X ${tx.toFixed(0)}, Z ${tz.toFixed(0)}`, 'move');
+        log(`going to X ${tx.toFixed(0)} Z ${tz.toFixed(0)}`, 'move');
         await withTimeout(b.pathfinder.goto(new goals.GoalNearXZ(tx, tz, 2)), 20000);
       } catch (_) { try { b.pathfinder.stop(); } catch (_) {} }
       if (session !== id) break;
       try { b.swingArm('right'); } catch (_) {}
       await sleep(2000 + Math.random() * 6000);
     }
-  })().catch(err => log('Ghoomne mein error: ' + err.message, 'warn'));
+  })().catch(err => log('walk error: ' + err.message, 'warn'));
 }
 
 function start() {
-  joins++;
-  log(`Server se connect ho raha hai: ${S.SERVER_IP}:${S.SERVER_PORT} (naam: ${S.BOT_NAME}, version: ${S.VERSION || 'auto'}) [koshish #${joins}]`, 'info');
+  attempts++;
+  log(`connecting to ${S.SERVER_IP}:${S.SERVER_PORT} as ${S.BOT_NAME} (version ${S.VERSION || 'auto'}) try #${attempts}`);
   let b;
   try {
-    b = mineflayer.createBot({ host: S.SERVER_IP, port: S.SERVER_PORT, username: S.BOT_NAME, version: S.VERSION, auth: 'offline' });
+    b = mineflayer.createBot({
+      host: S.SERVER_IP, port: S.SERVER_PORT, username: S.BOT_NAME, version: S.VERSION, auth: 'offline',
+      checkTimeoutInterval: 120000, // laggy servers won't cause false "timed out"
+      connectTimeout: 30000
+    });
   } catch (err) {
-    log('Bot nahi ban paya: ' + err.message, 'error');
-    return scheduleRejoin(S.REJOIN_WAIT + 5, 'create error');
+    log('create failed: ' + err.message, 'error');
+    return scheduleRejoin(S.REJOIN_WAIT + 5, 'create failed');
   }
   bot = b;
   const id = session;
@@ -268,25 +266,23 @@ function start() {
   b.physicsEnabled = false;
   if (b.physics) b.physics.enabled = false;
 
-  // join hi nahi hua to 60s baad dobara try
   timers.push(setTimeout(() => { if (!joinedAt) handleEnd(b, 'join timeout 60s'); }, 60000));
 
   b.once('spawn', () => {
     joinedAt = Date.now(); failsInRow = 0;
-    log(`Bot server mein JOIN ho gaya (version ${b.version})`, 'join');
+    log(`joined server (version ${b.version})`, 'join');
     timers.push(setTimeout(() => { ready = true; }, 4000));
 
     if (S.LOGIN_PASSWORD) {
       timers.push(setTimeout(() => {
         b.chat(`/register ${S.LOGIN_PASSWORD} ${S.LOGIN_PASSWORD}`);
         b.chat(`/login ${S.LOGIN_PASSWORD}`);
-        log('Login command bheji', 'info');
+        log('login command sent');
       }, 1500));
     }
-
     timers.push(setTimeout(() => {
       if (!b.entity || !Number.isFinite(b.entity.position.x) || !Number.isFinite(b.entity.position.y)) {
-        log('Spawn position kharab, rejoin kar raha hai', 'warn');
+        log('bad spawn position, rejoining', 'warn');
         return b.quit();
       }
       b.physicsEnabled = true;
@@ -303,10 +299,9 @@ function start() {
         i = (i + 1) % S.MESSAGE.length;
       }, Math.max(S.CHAT_DELAY, 1) * 1000));
     }
-
     if (S.STAY_MINUTES > 0) {
       timers.push(setTimeout(() => {
-        log(`${S.STAY_MINUTES} minute poore - bot leave kar raha hai`, 'leave');
+        log(`${S.STAY_MINUTES} minutes done, leaving`, 'leave');
         plannedLeave = true;
         b.quit();
       }, S.STAY_MINUTES * 60 * 1000));
@@ -317,33 +312,29 @@ function start() {
     if (pos === 'game_info' || !msg || !msg.trim()) return;
     log(msg, 'chat');
   });
-  b.on('playerJoined', p => { if (ready && p.username !== b.username) log(`${p.username} server mein aaya`, 'player_join'); });
-  b.on('playerLeft', p => { if (ready && p.username !== b.username) log(`${p.username} server se gaya`, 'player_leave'); });
-  b.on('death', () => log('Bot mar gaya, respawn ho raha hai', 'death'));
-  b.on('kicked', r => log(`KICK hua: ${reasonText(r)}`, 'kick'));
+  b.on('playerJoined', p => { if (ready && p.username !== b.username) log(`${p.username} joined`, 'player_join'); });
+  b.on('playerLeft', p => { if (ready && p.username !== b.username) log(`${p.username} left`, 'player_leave'); });
+  b.on('death', () => log('bot died, respawning', 'death'));
+  b.on('kicked', r => log(`kicked: ${reasonText(r)}`, 'kick'));
   b.on('error', err => {
-    log(`Error: ${err.code ? err.code + ' - ' : ''}${err.message}`, 'error');
-    // some join errors never fire "end", so make sure we still retry
-    timers.push(setTimeout(() => { if (!joinedAt) handleEnd(b, 'error'); }, 3000));
+    log(`${err.code ? err.code + ' ' : ''}${err.message}`, 'error');
+    timers.push(setTimeout(() => { if (!joinedAt) handleEnd(b, err.code || err.message); }, 3000));
   });
-  b.on('end', reason => handleEnd(b, reason || 'connection end'));
+  b.on('end', reason => handleEnd(b, reason || 'connection ended'));
 }
 
-// ============================ START ============================
-process.on('uncaughtException', err => log('Uncaught: ' + err.message, 'error'));
-process.on('unhandledRejection', err => log('Unhandled: ' + (err && err.message || err), 'error'));
+// ============================ RUN ============================
+process.on('uncaughtException', err => log('uncaught: ' + err.message, 'error'));
+process.on('unhandledRejection', err => log('unhandled: ' + (err && err.message || err), 'error'));
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, async () => {
     shuttingDown = true;
-    log('Railway bot ko band kar raha hai (restart/redeploy)', 'warn');
+    log('shutting down', 'warn');
     try { if (bot) bot.quit(); } catch (_) {}
     await flush().catch(() => {});
     setTimeout(() => process.exit(0), 500);
   });
 }
-
-console.log('================ GG_BOT ================');
-warnings.forEach(w => log('Settings: ' + w, 'warn'));
-const onoff = v => (v ? 'ON' : 'OFF');
-log(`Settings: Ghoomna ${onoff(S.RANDOM_WALK)} (${S.WALK_RADIUS} block) | Chat ${onoff(S.CHAT_MESSAGES)} | AFK ${onoff(S.ANTI_AFK)} | Stay ${S.STAY_MINUTES}min | Discord ${S.DISCORD_WEBHOOK ? 'ON' : 'OFF'}`, 'info');
+warnings.forEach(w => log('settings: ' + w, 'warn'));
+log(`started | walk ${S.RANDOM_WALK ? 'on' : 'off'} | chat ${S.CHAT_MESSAGES ? 'on' : 'off'} | stay ${S.STAY_MINUTES}min | discord ${S.DISCORD_WEBHOOK ? 'on' : 'off'}`);
 start();
