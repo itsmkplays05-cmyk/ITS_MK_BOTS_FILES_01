@@ -9,9 +9,9 @@
 
 
 # ---------- 1. SERVER (kahan join karna hai) ----------
-BOT_NAME = GG_BOT
-SERVER_IP = Deepak_SMP.aternos.me
-SERVER_PORT = 38292
+BOT_NAME = ITS_GG_BOT
+SERVER_IP = ITS-FRIEND-ONLY-SMP.aternos.me
+SERVER_PORT = 37984
 
 # auto = server ka jo version hai wahi use hoga (best).
 # Agar problem aaye to yaha version likho, jaise 1.20.4
@@ -39,7 +39,7 @@ ANTI_AFK = on
 
 # ---------- 4. CHAT MESSAGES ----------
 # on = niche wale MESSAGE bot chat mein bhejega
-CHAT_MESSAGES = on
+CHAT_MESSAGES = off
 
 # Har message ke beech kitne second ka gap
 CHAT_DELAY = 25
