@@ -281,16 +281,30 @@ function start() {
     if (!Number.isFinite(e.pitch)) e.pitch = 0;
     return finite3(e.position);
   };
-  b._client.on('position', p => { // runs after the library's own handler
-    if (!tpLogged) { tpLogged = true; log(`server teleport x=${p.x} y=${p.y} z=${p.z}`); }
+  // The server's teleport is the truth for our position. Apply it BEFORE and AFTER the library's own handler,
+  // so the bot never sends a wrong position (this is what spams "moved too quickly" on the server).
+  const relFlag = (p, name, bit) => {
+    const f = p.flags;
+    if (typeof f === 'number') return (f & bit) !== 0;
+    if (f && typeof f === 'object') return !!f[name];
+    return false;
+  };
+  let lastTp = null, syncs = 0;
+  const syncFromServer = p => {
     const e = b.entity;
-    if (!e) return;
-    if (!finite3(e.position) && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)) {
+    if (!e || !p) return;
+    if (!tpLogged) { tpLogged = true; log(`server teleport x=${p.x} y=${p.y} z=${p.z}`); }
+    if (!(Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z))) return;
+    const rel = relFlag(p, 'x', 1) || relFlag(p, 'y', 2) || relFlag(p, 'z', 4);
+    if (!rel) {
       e.position.set(p.x, p.y, p.z);
-      log('position repaired from server teleport', 'warn');
-    }
-    heal();
-  });
+      lastTp = { x: p.x, y: p.y, z: p.z };
+      if (!finite3(e.velocity)) e.velocity.set(0, 0, 0);
+      if (syncs++ % 25 === 0) log(`position synced with server (${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}) x${syncs}`, 'warn');
+    } else if (!finite3(e.position)) e.position.set(p.x, p.y, p.z);
+  };
+  b._client.prependListener('position', p => { try { syncFromServer(p); } catch (_) {} });
+  b._client.on('position', p => { try { syncFromServer(p); heal(); } catch (_) {} });
   b.on('physicsTick', heal);
   b.physicsEnabled = false;
   if (b.physics) b.physics.enabled = false;
@@ -308,6 +322,10 @@ function start() {
 
     const beginWalk = (n = 0) => {
       if (session !== id || !b.entity) return;
+      if (lastTp && b.entity && Math.hypot(b.entity.position.x - lastTp.x, b.entity.position.z - lastTp.z) > 2) {
+        b.entity.position.set(lastTp.x, lastTp.y, lastTp.z);
+        log('position corrected before walking', 'warn');
+      }
       if (heal()) {
         b.physicsEnabled = true;
         if (b.physics) b.physics.enabled = true;
