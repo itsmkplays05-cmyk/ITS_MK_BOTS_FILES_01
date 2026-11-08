@@ -1,47 +1,76 @@
-# =====================================================
-#   GG BOT SETTINGS  (lines starting with # are comments)
-#   Format:  KEY = value        on / off for switches
-# =====================================================
+# =====================================================================
+#   GG BOT v8  -  SETTINGS
+# =====================================================================
+#   Format  : KEY = value          (switches use  on / off)
+#   Comment : lines starting with # are ignored
+#   Edit this file on GitHub -> Railway redeploys automatically.
+#   Railway Variables (same KEY name) override anything written here.
+# =====================================================================
 
-# ---------- BOTS (rotation order: 1 -> 2 -> 3 -> 1 ...) ----------
-# Bot 1 starts first. Naam yahin se badal sakte ho.
-BOT_NAME = ITS_GG_01
+
+# ---------------------------------------------------------------------
+#  1. BOTS   (rotation order: 1 -> 2 -> 3 -> 1 ...)
+# ---------------------------------------------------------------------
+# Bot 1 starts first. Names: 3-16 characters, letters / numbers / _ only.
+# Need more bots? Add BOT_NAME_4 ... BOT_NAME_10.
+BOT_NAME   = ITS_GG_01
 BOT_NAME_2 = ITS_GG_02
 BOT_NAME_3 = ITS_GG_03
-# Aur bots chahiye to BOT_NAME_4 ... BOT_NAME_10 add kar do.
 
-# ---------- SERVER (sab bots isi server mein join honge) ----------
-SERVER_IP = ITS-FRIEND-ONLY-SMP.aternos.me
-SERVER_PORT = 37984
+
+# ---------------------------------------------------------------------
+#  2. SERVER   (all bots join this server)
+# ---------------------------------------------------------------------
+SERVER_IP      = ITS-FRIEND-ONLY-SMP.aternos.me
+SERVER_PORT    = 37984
+
+# auto  = detect the server version by itself (recommended)
+# Or write a fixed version, for example: 1.21.4  or  26.1
 SERVER_VERSION = auto
+
+# Used for /login and /register (AuthMe style plugins). Empty = no login.
 LOGIN_PASSWORD = 2345678
 
-# ---------- ROTATION ----------
-# Ek bot kitne ghante server mein rahega, uske baad agla bot aayega (0 = rotation band)
-ROTATE_HOURS = 3
-# on  = agla bot pehle join karta hai, phir purana nikalta hai (server kabhi khali nahi hota)
-# off = purana pehle nikalta hai, phir naya join karta hai (agar server 1 IP se 2 bot allow nahi karta)
-SEAMLESS_SWITCH = on
-# Switch ke time dono bot kitne second saath rahenge
-HANDOVER_OVERLAP = 10
-# Agla bot itne second mein join na kar paye to purana bot hi rukta hai
-HANDOVER_TIMEOUT = 120
-# Koi bhi bot switch na kar paye to itne minute baad dobara try
-SWITCH_RETRY_MINUTES = 5
-# Har itne minute mein logs mein status line (0 = off)
-STATUS_LOG_MINUTES = 10
-# Chhota status page (Railway ka public URL kholne par dikhega). off = band
-STATUS_PAGE = on
 
-# ---------- WALK / AFK ----------
-RANDOM_WALK = on
-WALK_RADIUS = 100
+# ---------------------------------------------------------------------
+#  3. ROTATION   (who is on duty, and when the next bot takes over)
+# ---------------------------------------------------------------------
+# Hours one bot stays on duty before the next one takes over. 0 = no rotation.
+ROTATE_HOURS = 3
+
+# on  = next bot joins first, then the old one leaves (server is never empty)
+# off = old bot leaves first, then the next one joins (use this if the server
+#       does not allow 2 accounts from the same IP at the same time)
+SEAMLESS_SWITCH = on
+
+# Seconds both bots stay together during a switch.
+HANDOVER_OVERLAP = 10
+
+# Seconds the next bot gets to join. If it fails, the old bot simply stays.
+HANDOVER_TIMEOUT = 120
+
+# If no bot could take over, try again after this many minutes.
+SWITCH_RETRY_MINUTES = 5
+
+
+# ---------------------------------------------------------------------
+#  4. WALKING / ANTI-AFK
+# ---------------------------------------------------------------------
+# The bot walks to random places and never goes further than
+# WALK_RADIUS blocks away from where it spawned (no circle walking).
+RANDOM_WALK      = on
+WALK_RADIUS      = 100
 WALK_START_DELAY = 10
+
+# Arm swing + small head movement so the server does not kick for AFK.
 ANTI_AFK = on
 
-# ---------- CHAT ----------
+
+# ---------------------------------------------------------------------
+#  5. CHAT   (automatic messages, off by default)
+# ---------------------------------------------------------------------
 CHAT_MESSAGES = off
-CHAT_DELAY = 25
+CHAT_DELAY    = 25
 MESSAGE = MADE BY Pipka
 MESSAGE = DISCORD SERVER = discord.gg/Jma9yFsqdF
 MESSAGE = SERVER OWNERS pipkagamer
@@ -49,16 +78,62 @@ MESSAGE = DONT USE XRAY ETC MODE DIRECT BAN
 MESSAGE = DON'T ABUSE WITH PLAYERS
 MESSAGE = THANKS FOR COME
 
-# ---------- STAY / REJOIN (har bot apne turn ke andar ye karta hai) ----------
-STAY_MINUTES = 30
-LEAVE_WAIT = 10
-REJOIN_WAIT = 3
 
-# ---------- DISCORD ----------
-DISCORD_WEBHOOK =
-DISCORD_NAME = GG_BOT Logs
-DISCORD_CHAT = on
-DISCORD_PLAYERS = on
-DISCORD_BOT_EVENTS = on
-DISCORD_MOVEMENT = off
+# ---------------------------------------------------------------------
+#  6. TIMED LEAVE / REJOIN   (each bot does this inside its own turn)
+# ---------------------------------------------------------------------
+# Minutes a bot stays before it leaves for a moment and comes back. 0 = never.
+STAY_MINUTES = 30
+
+# Seconds the bot stays out during that short leave.
+LEAVE_WAIT = 10
+
+
+# ---------------------------------------------------------------------
+#  7. CONNECTION STABILITY   (fixes "connection lost" problems)
+# ---------------------------------------------------------------------
+# First reconnect delay in seconds. It doubles after every failed attempt
+# (5, 10, 20, 40 ...) until REJOIN_MAX, then resets after a good join.
+REJOIN_WAIT = 5
+REJOIN_MAX  = 60
+
+# A join attempt that takes longer than this many seconds is cancelled.
+JOIN_TIMEOUT = 60
+
+# No data from the server for this many seconds = dead connection, so the
+# bot reconnects by itself. 0 = off. (Do not go below 30.)
+STALE_TIMEOUT = 75
+
+# on = check that the server is up before joining. If the server is
+# offline / starting (Aternos), the bot waits quietly and joins as soon as
+# it is online, instead of failing again and again.
+PING_BEFORE_JOIN = on
+
+# Seconds between checks while the server is offline / starting.
+OFFLINE_RETRY = 30
+
+
+# ---------------------------------------------------------------------
+#  8. LOGS + DASHBOARD
+# ---------------------------------------------------------------------
+# Status line in the Railway logs every N minutes. 0 = off.
+STATUS_LOG_MINUTES = 10
+
+# Live dashboard on the Railway public URL ( / ). JSON on /api/status.
+# It never shows the server IP or any password. off = disable.
+STATUS_PAGE = on
+
 TIMEZONE = Asia/Kolkata
+
+
+# ---------------------------------------------------------------------
+#  9. DISCORD LOGS   (optional)
+# ---------------------------------------------------------------------
+# Paste a Discord webhook URL to get logs in a Discord channel.
+# Keep your GitHub repo PRIVATE if you write the webhook here.
+DISCORD_WEBHOOK    =
+DISCORD_NAME       = GG_BOT Logs
+DISCORD_CHAT       = on
+DISCORD_PLAYERS    = on
+DISCORD_BOT_EVENTS = on
+DISCORD_MOVEMENT   = off

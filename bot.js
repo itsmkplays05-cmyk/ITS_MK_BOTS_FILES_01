@@ -1,14 +1,15 @@
 'use strict';
 // =====================================================================
-//  GG BOT v7.0  -  3 BOT ROTATION  (Railway ready)
+//  GG BOT v8.0  -  Multi-bot AFK rotation for Minecraft (Railway ready)
 //
-//  - ITS_GG_BOT -> ITS_GG_02 -> ITS_GG_03 -> ITS_GG_BOT -> ... (loop)
-//  - Only one bot is "on duty" for ROTATE_HOURS (default 3 hours).
-//  - When the time is over the NEXT bot joins first, and the old bot
-//    leaves a few seconds later -> server is never empty.
-//  - If the next bot cannot join (whitelist, name problem, etc.) the old
-//    bot stays online and the next-next bot is tried. Nothing breaks.
-//  - Every bot uses the same join / login / walking logic as before.
+//  - Bots rotate in order: BOT_NAME -> BOT_NAME_2 -> BOT_NAME_3 -> ...
+//  - Only one bot is "on duty" for ROTATE_HOURS. The next bot joins first,
+//    then the old bot leaves, so the server is never empty.
+//  - Auto version detection (any version the installed mineflayer supports).
+//  - Self-healing connection: server ping before join, exponential backoff,
+//    kick-reason aware retry delays, stale-connection detection, watchdog.
+//  - Random walk inside WALK_RADIUS blocks of the spawn point (no circles).
+//  - Live dashboard on the Railway public URL ( / ), JSON on /api/status.
 //  - All settings come from settings.txt (Railway Variables override it).
 // =====================================================================
 const fs = require('fs');
@@ -17,36 +18,49 @@ const http = require('http');
 const mineflayer = require('mineflayer');
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 
+let protocolLib = null; // used only for the optional "is the server up?" ping
+try { protocolLib = require('minecraft-protocol'); } catch (_) { /* optional */ }
+
 // ============================ SETTINGS ============================
 // Works even if settings.txt is missing (built-in defaults below).
 const MAX_BOTS = 10;
 const DEFAULTS = {
-  BOT_NAME: 'ITS_GG_BOT',        // bot 1 (starts first)
-  BOT_NAME_2: 'ITS_GG_02',       // bot 2
-  BOT_NAME_3: 'ITS_GG_03',       // bot 3
+  BOT_NAME: 'ITS_GG_01',
+  BOT_NAME_2: 'ITS_GG_02',
+  BOT_NAME_3: 'ITS_GG_03',
   SERVER_IP: 'ITS-FRIEND-ONLY-SMP.aternos.me',
   SERVER_PORT: 37984,
   SERVER_VERSION: 'auto',
   LOGIN_PASSWORD: '2345678',
 
-  ROTATE_HOURS: 3,               // how long ONE bot stays before the next one takes over (0 = no rotation)
-  SEAMLESS_SWITCH: true,         // next bot joins first, old bot leaves after it (server never empty)
-  HANDOVER_OVERLAP: 10,          // seconds both bots stay together during a switch
-  HANDOVER_TIMEOUT: 120,         // seconds to wait for the next bot to join before giving up on it
-  SWITCH_RETRY_MINUTES: 5,       // if nobody could take over, try again after this many minutes
-  STATUS_LOG_MINUTES: 10,        // print a status line every N minutes (0 = off)
-  STATUS_PAGE: true,             // tiny status web page (uses the PORT that Railway gives)
-  STATUS_PORT: 3000,             // port for the status page when PORT is not set
+  ROTATE_HOURS: 3,
+  SEAMLESS_SWITCH: true,
+  HANDOVER_OVERLAP: 10,
+  HANDOVER_TIMEOUT: 120,
+  SWITCH_RETRY_MINUTES: 5,
+  STATUS_LOG_MINUTES: 10,
+  STATUS_PAGE: true,
+  STATUS_PORT: 3000,
 
   RANDOM_WALK: true,
   WALK_RADIUS: 100,
   WALK_START_DELAY: 10,
   ANTI_AFK: true,
+
   CHAT_MESSAGES: false,
   CHAT_DELAY: 25,
+
   STAY_MINUTES: 30,
   LEAVE_WAIT: 10,
-  REJOIN_WAIT: 3,
+
+  // connection stability
+  REJOIN_WAIT: 5,          // first reconnect delay (seconds), doubles after every failure
+  REJOIN_MAX: 60,          // reconnect delay never goes above this (seconds)
+  JOIN_TIMEOUT: 60,        // give up a join attempt after this many seconds
+  STALE_TIMEOUT: 75,       // no data from the server for this long = dead connection (0 = off)
+  PING_BEFORE_JOIN: true,  // check that the server is up before joining (saves spam)
+  OFFLINE_RETRY: 30,       // wait this long when the server is offline / starting (seconds)
+
   DISCORD_WEBHOOK: '',
   DISCORD_NAME: 'GG_BOT Logs',
   DISCORD_CHAT: true,
@@ -55,7 +69,7 @@ const DEFAULTS = {
   DISCORD_MOVEMENT: false,
   TIMEZONE: 'Asia/Kolkata'
 };
-for (let i = 4; i <= MAX_BOTS; i++) DEFAULTS[`BOT_NAME_${i}`] = ''; // optional extra bots
+for (let i = 4; i <= MAX_BOTS; i++) DEFAULTS[`BOT_NAME_${i}`] = '';
 const DEFAULT_MESSAGES = [
   'MADE BY Pipka', 'DISCORD SERVER = discord.gg/Jma9yFsqdF', 'SERVER OWNERS pipkagamer',
   'DONT USE XRAY ETC MODE DIRECT BAN', "DON'T ABUSE WITH PLAYERS", 'THANKS FOR COME'
@@ -98,14 +112,18 @@ function loadSettings() {
     });
   } else S.MESSAGE = [...DEFAULT_MESSAGES];
 
-  for (const key of Object.keys(DEFAULTS)) { // Railway Variables override
+  for (const key of Object.keys(DEFAULTS)) { // Railway Variables override settings.txt
     const v = process.env[key];
     if (v !== undefined && v !== '') apply(key, String(v).trim(), 'variable');
   }
   S.VERSION = /^(auto|latest|)$/i.test(S.SERVER_VERSION) ? false : S.SERVER_VERSION;
   S.SERVER_PORT = Math.floor(S.SERVER_PORT) || 25565;
+  S.REJOIN_WAIT = Math.max(S.REJOIN_WAIT, 1);
+  S.REJOIN_MAX = Math.max(S.REJOIN_MAX, S.REJOIN_WAIT);
+  S.JOIN_TIMEOUT = Math.max(S.JOIN_TIMEOUT, 15);
+  S.OFFLINE_RETRY = Math.max(S.OFFLINE_RETRY, 5);
+  if (S.STALE_TIMEOUT > 0) S.STALE_TIMEOUT = Math.max(S.STALE_TIMEOUT, 30);
 
-  // bot names in rotation order (BOT_NAME, BOT_NAME_2, BOT_NAME_3, ...)
   const names = [], seen = new Set();
   for (let i = 1; i <= MAX_BOTS; i++) {
     const key = i === 1 ? 'BOT_NAME' : `BOT_NAME_${i}`;
@@ -240,10 +258,84 @@ function guardPackets(b, who) {
     return orig(name, params);
   };
 }
+// Random point near the bot, never further than R blocks from the spawn point.
+function pickTarget(p, spawn, R) {
+  let tx = p.x + (Math.random() * 2 - 1) * 30;
+  let tz = p.z + (Math.random() * 2 - 1) * 30;
+  const dx = tx - spawn.x, dz = tz - spawn.z, d = Math.hypot(dx, dz);
+  if (d > R) { tx = spawn.x + dx / d * R; tz = spawn.z + dz / d * R; }
+  return { x: tx, z: tz };
+}
+
+// Decides how long to wait before the next join attempt, based on WHY the last one ended.
+function retryPlan(text, fails) {
+  const t = String(text || '').toLowerCase();
+  let wait = Math.min(S.REJOIN_MAX, S.REJOIN_WAIT * Math.pow(2, Math.max(0, fails - 1)));
+  let note = '', versionProblem = false;
+  if (/throttl|too (fast|quickly)|wait before reconnect/.test(t)) {
+    wait = Math.max(wait, 20); note = 'server is throttling fast reconnects';
+  } else if (/banned|ban reason|you are ban/.test(t)) {
+    wait = Math.max(wait, 300); note = 'this bot name is BANNED on the server (unban it or change the name)';
+  } else if (/white-?list/.test(t)) {
+    wait = Math.max(wait, 60); note = 'bot name is not whitelisted (add it to the whitelist)';
+  } else if (/already (online|connected|logged)|another location|duplicate|same name|name is taken/.test(t)) {
+    wait = Math.max(wait, 20); note = 'same name is still online on the server';
+  } else if (/server (is )?full|is full/.test(t)) {
+    wait = Math.max(wait, 30); note = 'server is full';
+  } else if (/outdated|incompatible|unsupported|not supported|protocol/.test(t)) {
+    wait = Math.max(wait, 30); note = 'version mismatch between bot and server'; versionProblem = true;
+  } else if (/closed|restart|stopping|shutting down|going down/.test(t)) {
+    wait = Math.max(wait, 15); note = 'server is restarting';
+  }
+  return { wait: Math.round(wait + Math.random() * 2), note, versionProblem };
+}
+
+// ============================ SERVER CHECK ============================
+// Pings the server (no login) to see if it is up and which version it reports.
+const probe = { at: 0, result: { state: 'unknown' } };
+async function probeServer() {
+  if (!protocolLib || typeof protocolLib.ping !== 'function') return { state: 'unknown' };
+  if (Date.now() - probe.at < 8000) return probe.result;
+  let result;
+  try {
+    const r = await withTimeout(new Promise((resolve, reject) => {
+      protocolLib.ping({ host: S.SERVER_IP, port: S.SERVER_PORT, closeTimeout: 8000 }, (err, res) => (err ? reject(err) : resolve(res)));
+    }), 10000);
+    const vname = String((r && r.version && r.version.name) || '');
+    const motd = reasonText(r && r.description);
+    const aternos = /aternos\.(me|host|org)$/i.test(S.SERVER_IP);
+    // Aternos answers pings even when the server is stopped - detect that, but only for Aternos hosts.
+    const sleeping = aternos && (
+      (r.version && r.version.protocol === -1) ||
+      /^\W*(offline|starting|stopping|loading|saving|preparing)/i.test(vname) ||
+      /server is (offline|starting|stopping|loading|saving|preparing)|in queue/i.test(motd)
+    );
+    result = {
+      state: sleeping ? 'offline' : 'online',
+      version: vname.replace(/§./g, '').trim() || null,
+      players: r && r.players ? r.players.online : null,
+      max: r && r.players ? r.players.max : null
+    };
+  } catch (err) {
+    result = { state: 'offline', error: err.code || err.message };
+  }
+  probe.at = Date.now();
+  probe.result = result;
+  return result;
+}
 
 // ============================ SHARED STATE ============================
-const shared = { forcedVersion: null }; // server version problem is the same for every bot
+const shared = { forcedVersion: null, forcedAt: 0, versionHintAt: 0 }; // server version problem is the same for every bot
 let shuttingDown = false;
+
+function versionHint() {
+  const latest = mineflayer.latestSupportedVersion || 'unknown';
+  if (Date.now() - shared.versionHintAt < 600000) return;
+  shared.versionHintAt = Date.now();
+  log(`the installed mineflayer supports up to Minecraft ${latest}, but the server runs a newer/different version. ` +
+    'Fix: (1) install ViaVersion + ViaBackwards on the server, or (2) set the server to a supported version, or ' +
+    '(3) redeploy later - a fresh Railway build pulls the newest mineflayer automatically. See README "Supported versions".', 'warn');
+}
 
 // ============================ ONE BOT (WORKER) ============================
 // A Worker is one bot name. It can be switched ON (activate) or OFF (deactivate)
@@ -255,15 +347,19 @@ class Worker {
     this.bot = null;
     this.timers = [];
     this.session = 0;
+    this.startToken = 0;
     this.active = false;     // should this bot be on the server right now?
     this.online = false;     // connected and spawned
     this.settled = false;    // login finished (or no login needed) -> safe to hand over
+    this.probing = false;
     this.retrying = false;
     this.rejoinTimer = null;
     this.plannedLeave = false;
     this.attempts = 0;
     this.failsInRow = 0;
+    this.offlineStreak = 0;
     this.joinedAt = 0;
+    this.lastKick = '';
   }
 
   log(msg, kind = 'info') { log(msg, kind, this.name); }
@@ -279,8 +375,10 @@ class Worker {
     this.active = true;
     this.attempts = 0;
     this.failsInRow = 0;
+    this.offlineStreak = 0;
     this.plannedLeave = false;
     this.retrying = false;
+    this.probing = false;
     this.start();
   }
 
@@ -288,9 +386,11 @@ class Worker {
     if (!this.active && !this.bot) return;
     this.active = false;
     this.log(`stopping (${why})`, 'leave');
+    this.startToken++;
     this.clearAll();
     if (this.rejoinTimer) { clearTimeout(this.rejoinTimer); this.rejoinTimer = null; }
     this.retrying = false;
+    this.probing = false;
     this.plannedLeave = false;
     const b = this.bot;
     this.bot = null;
@@ -306,15 +406,16 @@ class Worker {
 
   shutdown() {
     this.active = false;
+    this.startToken++;
     this.clearAll();
     if (this.rejoinTimer) { clearTimeout(this.rejoinTimer); this.rejoinTimer = null; }
     try { if (this.bot) { this.bot._done = true; this.bot.quit(); } } catch (_) {}
   }
 
-  // Safety net: an active bot must always be connected or have a reconnect pending.
+  // Safety net: an active bot must always be connected, probing, or have a reconnect pending.
   watchdog() {
     if (!this.active || shuttingDown) return;
-    if (!this.bot && !this.retrying) {
+    if (!this.bot && !this.retrying && !this.probing) {
       this.log('watchdog: no connection and no reconnect pending - restarting', 'warn');
       this.start();
     }
@@ -348,41 +449,67 @@ class Worker {
     if (b !== this.bot || b._done) return;
     b._done = true;
     try { b.end(); } catch (_) {}
+    this.bot = null;
     this.online = false;
     this.settled = false;
     const stayed = this.joinedAt ? Math.round((Date.now() - this.joinedAt) / 1000) : 0;
+    const reason = this.lastKick || String(why || 'connection ended');
+    this.lastKick = '';
     if (this.plannedLeave) {
       this.plannedLeave = false;
       this.joinedAt = 0;
       this.log(`left server, rejoin in ${S.LEAVE_WAIT}s`, 'leave');
       return this.scheduleRejoin(S.LEAVE_WAIT, 'timed leave');
     }
-    if (this.joinedAt) { this.failsInRow = 0; this.log(`connection lost: ${why} (was online ${stayed}s)`, 'leave'); }
-    else { this.failsInRow++; this.log(`could not join: ${why}`, 'warn'); }
+    if (this.joinedAt) {
+      if (stayed < 15) this.failsInRow++; else this.failsInRow = 0;
+      this.log(`connection lost: ${reason} (was online ${stayed}s)`, 'leave');
+    } else {
+      this.failsInRow++;
+      this.log(`could not join: ${reason}`, 'warn');
+    }
     this.joinedAt = 0;
-    const extra = this.failsInRow > 2 ? Math.min((this.failsInRow - 2) * 5, 30) : 0;
-    this.scheduleRejoin(S.REJOIN_WAIT + extra, why);
+    const plan = retryPlan(reason, this.failsInRow);
+    if (plan.note) this.log(plan.note, 'warn');
+    if (plan.versionProblem) versionHint();
+    this.scheduleRejoin(plan.wait, reason);
   }
 
+  // ---------- random walk (stays inside WALK_RADIUS blocks of the spawn point) ----------
   startRoaming(b, id) {
     const spawn = b.entity.position.clone();
     const R = S.WALK_RADIUS;
-    const mv = new Movements(b, require('minecraft-data')(b.version));
-    mv.canDig = false; mv.allowParkour = false; mv.allow1by1towers = false;
-    b.pathfinder.setMovements(mv);
-    b.pathfinder.thinkTimeout = 4000;
+    let usePathfinder = true;
+    try {
+      let data = b.registry;
+      if (!data) data = require('minecraft-data')(b.version);
+      const mv = new Movements(b, data);
+      mv.canDig = false; mv.allowParkour = false; mv.allow1by1towers = false;
+      b.pathfinder.setMovements(mv);
+      b.pathfinder.thinkTimeout = 4000;
+    } catch (err) {
+      usePathfinder = false;
+      this.log(`pathfinder not available (${err.message}) - using simple walking`, 'warn');
+    }
     this.log(`walking within ${R} blocks of spawn (${spawn.x.toFixed(0)}, ${spawn.y.toFixed(0)}, ${spawn.z.toFixed(0)})`, 'move');
     (async () => {
-      while (this.session === id && b.entity) {
+      let pfFails = 0;
+      while (this.session === id && b === this.bot) {
+        if (!b.entity) { await sleep(1000); continue; }
+        const t = pickTarget(b.entity.position, spawn, R);
+        this.log(`going to X ${t.x.toFixed(0)} Z ${t.z.toFixed(0)}`, 'move');
         try {
-          const p = b.entity.position;
-          let tx = p.x + (Math.random() * 2 - 1) * 30;
-          let tz = p.z + (Math.random() * 2 - 1) * 30;
-          const dx = tx - spawn.x, dz = tz - spawn.z, d = Math.hypot(dx, dz);
-          if (d > R) { tx = spawn.x + dx / d * R; tz = spawn.z + dz / d * R; }
-          this.log(`going to X ${tx.toFixed(0)} Z ${tz.toFixed(0)}`, 'move');
-          await withTimeout(b.pathfinder.goto(new goals.GoalNearXZ(tx, tz, 2)), 20000);
-        } catch (_) { try { b.pathfinder.stop(); } catch (_) {} }
+          if (usePathfinder) {
+            await withTimeout(b.pathfinder.goto(new goals.GoalNearXZ(t.x, t.z, 2)), 20000);
+            pfFails = 0;
+          } else await this.walkSimple(b, id, t);
+        } catch (_) {
+          try { b.pathfinder.stop(); } catch (_) {}
+          if (usePathfinder && ++pfFails >= 8) {
+            usePathfinder = false;
+            this.log('pathfinder keeps failing - switching to simple walking', 'warn');
+          }
+        }
         if (this.session !== id) break;
         try { b.swingArm('right'); } catch (_) {}
         await sleep(2000 + Math.random() * 6000);
@@ -390,12 +517,59 @@ class Worker {
     })().catch(err => this.log('walk error: ' + err.message, 'warn'));
   }
 
-  start() {
+  // Fallback walking without pathfinder: face the target, walk forward, jump when stuck.
+  async walkSimple(b, id, t) {
+    const release = () => { for (const k of ['forward', 'sprint', 'jump']) { try { b.setControlState(k, false); } catch (_) {} } };
+    try {
+      const p0 = b.entity.position;
+      await b.lookAt(p0.offset(t.x - p0.x, 1.6, t.z - p0.z), true);
+      b.setControlState('forward', true);
+      const end = Date.now() + 8000;
+      let last = b.entity.position.clone(), lastCheck = Date.now();
+      while (Date.now() < end && this.session === id && b === this.bot && b.entity) {
+        const p = b.entity.position;
+        if (Math.hypot(p.x - t.x, p.z - t.z) < 2) break;
+        if (Date.now() - lastCheck > 1000) {
+          b.setControlState('jump', Math.hypot(p.x - last.x, p.z - last.z) < 0.3);
+          last = p.clone(); lastCheck = Date.now();
+        }
+        await sleep(150);
+      }
+    } finally { release(); }
+  }
+
+  // ---------- connection ----------
+  async start() {
+    if (!this.active || shuttingDown) return;
+    const token = ++this.startToken;
+    if (S.PING_BEFORE_JOIN) {
+      this.probing = true;
+      let p;
+      try { p = await probeServer(); } catch (_) { p = { state: 'unknown' }; }
+      if (token !== this.startToken || !this.active || shuttingDown) return;
+      this.probing = false;
+      if (p.state === 'offline') {
+        this.offlineStreak++;
+        // Safety valve: every 5th check try a real join anyway (in case the ping check is wrong).
+        if (this.offlineStreak % 5 !== 0) {
+          if (this.offlineStreak === 1 || this.offlineStreak % 10 === 0) {
+            this.log(`server is offline or starting${p.error ? ' (' + p.error + ')' : ''} - waiting (checks every ${S.OFFLINE_RETRY}s, start it from your host panel)`, 'warn');
+          }
+          return this.scheduleRejoin(S.OFFLINE_RETRY, 'server offline');
+        }
+      } else this.offlineStreak = 0;
+    }
+    this.connect();
+  }
+
+  connect() {
     if (!this.active || shuttingDown) return;
     this.attempts++;
     this.joinedAt = 0;
     this.online = false;
     this.settled = false;
+    this.lastKick = '';
+    if (shared.forcedVersion && Date.now() - shared.forcedAt > 30 * 60000) shared.forcedVersion = null; // re-try auto detect
     const ver = shared.forcedVersion || S.VERSION;
     this.log(`connecting to ${S.SERVER_IP}:${S.SERVER_PORT} as ${this.name} (version ${ver || 'auto'}) try #${this.attempts}`);
     let b;
@@ -407,14 +581,22 @@ class Worker {
       });
     } catch (err) {
       this.log('create failed: ' + err.message, 'error');
-      return this.scheduleRejoin(S.REJOIN_WAIT + 5, 'create failed');
+      this.failsInRow++;
+      return this.scheduleRejoin(retryPlan(err.message, this.failsInRow).wait, 'create failed');
     }
     this.bot = b;
     const id = this.session;
     let ready = false;
+    let lastPacket = Date.now();
 
     guardPackets(b, this.name);
     b.loadPlugin(pathfinder);
+
+    // TCP keep-alive + "last data seen" tracking (detects half-dead connections).
+    b._client.once('connect', () => {
+      try { b._client.socket.setKeepAlive(true, 15000); b._client.socket.setNoDelay(true); } catch (_) {}
+    });
+    b._client.on('packet', () => { lastPacket = Date.now(); });
 
     // Self-heal: some server/library version combos give a NaN position -> bad move packets / disconnects.
     const finite3 = v => !!v && Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z);
@@ -460,13 +642,27 @@ class Worker {
     b.physicsEnabled = false;
     if (b.physics) b.physics.enabled = false;
 
-    this.timers.push(setTimeout(() => { if (!this.joinedAt) this.handleEnd(b, 'join timeout 60s'); }, 60000));
+    this.timers.push(setTimeout(() => {
+      if (!this.joinedAt) this.handleEnd(b, `join timeout ${S.JOIN_TIMEOUT}s`);
+    }, S.JOIN_TIMEOUT * 1000));
 
     b.once('spawn', () => {
       if (b !== this.bot) return; // this bot was switched off while it was still joining
       this.joinedAt = Date.now(); this.failsInRow = 0; this.online = true;
+      lastPacket = Date.now();
       this.log(`joined server (version ${b.version})`, 'join');
       this.timers.push(setTimeout(() => { ready = true; }, 4000));
+
+      // Dead-connection detector: the server normally sends data every few seconds.
+      if (S.STALE_TIMEOUT > 0) {
+        this.timers.push(setInterval(() => {
+          const idle = Date.now() - lastPacket;
+          if (idle > S.STALE_TIMEOUT * 1000) {
+            this.log(`no data from server for ${Math.round(idle / 1000)}s - reconnecting`, 'warn');
+            this.handleEnd(b, 'stale connection (no data)');
+          }
+        }, 10000));
+      }
 
       const spawnT = Date.now();
       const pw = S.LOGIN_PASSWORD;
@@ -526,7 +722,15 @@ class Worker {
         }, 22000));
       } else scheduleWalk();
 
-      if (S.ANTI_AFK) this.timers.push(setInterval(() => { try { b.swingArm('right'); } catch (_) {} }, 20000));
+      if (S.ANTI_AFK) {
+        this.timers.push(setInterval(() => {
+          try {
+            b.swingArm('right');
+            const e = b.entity;
+            if (e && Number.isFinite(e.yaw)) b.look(e.yaw + (Math.random() - 0.5) * 0.6, 0, false);
+          } catch (_) {}
+        }, 20000));
+      }
 
       if (S.CHAT_MESSAGES && S.MESSAGE.length) {
         let i = 0;
@@ -553,13 +757,20 @@ class Worker {
     b.on('playerJoined', p => { if (b === this.bot && ready && p.username !== b.username) this.log(`${p.username} joined`, 'player_join'); });
     b.on('playerLeft', p => { if (b === this.bot && ready && p.username !== b.username) this.log(`${p.username} left`, 'player_leave'); });
     b.on('death', () => { if (b === this.bot) this.log('bot died, respawning', 'death'); });
-    b.on('kicked', r => { if (b === this.bot) this.log(`kicked: ${reasonText(r)}`, 'kick'); });
+    b.on('kicked', r => {
+      if (b !== this.bot) return;
+      this.lastKick = reasonText(r);
+      this.log(`kicked: ${this.lastKick}`, 'kick');
+    });
     b.on('error', err => {
       if (b !== this.bot) return;
       this.log(`${err.code ? err.code + ' ' : ''}${err.message}`, 'error');
-      if (!this.joinedAt && !shared.forcedVersion && /not supported|unsupported/i.test(err.message) && mineflayer.latestSupportedVersion) {
-        shared.forcedVersion = mineflayer.latestSupportedVersion;
-        this.log(`server version not supported, trying ${shared.forcedVersion}`, 'warn');
+      if (!this.joinedAt && /not supported|unsupported/i.test(err.message)) {
+        if (!shared.forcedVersion && mineflayer.latestSupportedVersion) {
+          shared.forcedVersion = mineflayer.latestSupportedVersion;
+          shared.forcedAt = Date.now();
+          this.log(`server version not supported, trying ${shared.forcedVersion}`, 'warn');
+        } else versionHint();
       }
       this.timers.push(setTimeout(() => { if (!this.joinedAt) this.handleEnd(b, err.code || err.message); }, 3000));
     });
@@ -679,9 +890,16 @@ class Rotator {
 
   snapshot() {
     const now = Date.now();
+    const pr = probe.result || {};
     return {
       status: 'running',
       uptime: fmtDur(process.uptime() * 1000),
+      server: {
+        state: pr.state || 'unknown',
+        version: pr.version || null,
+        players: pr.players == null ? null : pr.players,
+        maxPlayers: pr.max == null ? null : pr.max
+      },
       rotation: {
         enabled: this.enabled,
         order: this.workers.map(w => w.name),
@@ -709,24 +927,115 @@ class Rotator {
 // ============================ STATUS PAGE ============================
 // Optional. Open the Railway public URL to see which bot is on duty and when the next switch happens.
 // It never shows the server IP or any password.
+const DASHBOARD_HTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GG BOT Dashboard</title>
+<style>
+:root{--bg:#f4f6f9;--card:#ffffff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--accent:#2563eb}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--card:#151b23;--text:#e6edf3;--muted:#8b949e;--line:#262d38;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--accent:#58a6ff}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:860px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.v{font-size:18px;font-weight:600;margin-top:2px;word-break:break-word}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);font-size:14px}
+th{color:var(--muted);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+tr:last-child td{border-bottom:0}
+.scroll{overflow-x:auto}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;color:#fff}
+.on{background:var(--ok)}.wait{background:var(--warn)}.off{background:var(--muted)}.bad{background:var(--bad)}
+.duty{color:var(--accent);font-weight:600}
+.foot{color:var(--muted);font-size:12px;margin-top:14px}
+</style></head>
+<body><main>
+<h1>GG BOT Dashboard</h1>
+<div class="sub" id="sub">Loading...</div>
+<div class="grid">
+<div class="card"><div class="k">On duty</div><div class="v" id="duty">-</div></div>
+<div class="card"><div class="k">Next switch in</div><div class="v" id="next">-</div></div>
+<div class="card"><div class="k">Server</div><div class="v" id="srv">-</div></div>
+<div class="card"><div class="k">Uptime</div><div class="v" id="up">-</div></div>
+</div>
+<div class="card scroll"><table>
+<thead><tr><th>Bot</th><th>State</th><th>Online for</th><th>Tries</th></tr></thead>
+<tbody id="rows"></tbody></table></div>
+<div class="foot">Auto refresh every 5 seconds. JSON: /api/status</div>
+</main>
+<script>
+function el(tag, cls, text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;}
+function setText(id, t){document.getElementById(id).textContent=t;}
+function render(d){
+  var r=d.rotation, s=d.server||{};
+  setText('duty', r.activeBot);
+  setText('next', r.enabled ? r.nextSwitchIn : 'rotation off');
+  var srv = s.state==='online' ? 'Online' : (s.state==='offline' ? 'Offline / starting' : 'Unknown');
+  if (s.state==='online' && s.players!==null) srv += ' (' + s.players + '/' + s.maxPlayers + ')';
+  setText('srv', srv);
+  setText('up', d.uptime);
+  setText('sub', 'Order: ' + r.order.join(' > ') + ' | ' + r.hoursPerBot + 'h per bot | switches done: ' + r.switchesDone);
+  var body=document.getElementById('rows'); body.textContent='';
+  d.bots.forEach(function(b){
+    var tr=el('tr'), name=el('td', b.name===r.activeBot?'duty':'', b.name);
+    var st=el('td'), label, cls;
+    if(b.online&&b.ready){label='Online';cls='on';}
+    else if(b.online){label='Logging in';cls='wait';}
+    else if(b.active){label='Connecting';cls='wait';}
+    else {label='Standby';cls='off';}
+    st.appendChild(el('span','badge '+cls,label));
+    tr.appendChild(name);tr.appendChild(st);
+    tr.appendChild(el('td','',b.onlineFor||'-'));
+    tr.appendChild(el('td','',String(b.tries)));
+    body.appendChild(tr);
+  });
+}
+function load(){
+  fetch('/api/status',{cache:'no-store'}).then(function(r){return r.json();}).then(render)
+  .catch(function(){setText('sub','Cannot reach the bot right now, retrying...');});
+}
+load(); setInterval(load, 5000);
+</script></body></html>`;
+
 let statusServer = null;
 function startStatusPage(rot) {
   if (!S.STATUS_PAGE) return;
   const port = Number(process.env.PORT) || S.STATUS_PORT;
   statusServer = http.createServer((req, res) => {
     try {
-      if (req.url === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-      res.end(JSON.stringify(rot.snapshot(), null, 2));
+      const url = String(req.url || '/').split('?')[0];
+      if (url === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
+      if (url === '/api/status' || url === '/status') {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(rot.snapshot(), null, 2));
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(DASHBOARD_HTML);
     } catch (_) { try { res.writeHead(500); res.end('error'); } catch (_) {} }
   });
   statusServer.on('error', err => log('status page: ' + err.message, 'warn'));
-  statusServer.listen(port, '0.0.0.0', () => log(`status page is on port ${port} (/ = status, /health = ok)`));
+  statusServer.listen(port, '0.0.0.0', () => log(`dashboard is on port ${port} (/ = dashboard, /api/status = json, /health = ok)`));
 }
 
 // ============================ RUN ============================
-process.on('uncaughtException', err => log('uncaught: ' + err.message, 'error'));
-process.on('unhandledRejection', err => log('unhandled: ' + (err && err.message || err), 'error'));
+// If the program itself keeps hitting unexpected errors, exit so Railway restarts it cleanly.
+const crashes = [];
+function noteCrash(kind, err) {
+  log(`${kind}: ${(err && err.message) || err}`, 'error');
+  const now = Date.now();
+  crashes.push(now);
+  while (crashes.length && now - crashes[0] > 300000) crashes.shift();
+  if (crashes.length > 25 && !shuttingDown) {
+    log('too many internal errors in 5 minutes - exiting so Railway restarts the bot', 'error');
+    setTimeout(() => process.exit(1), 1500);
+  }
+}
+process.on('uncaughtException', err => noteCrash('uncaught', err));
+process.on('unhandledRejection', err => noteCrash('unhandled', err));
 
 warnings.forEach(w => log('settings: ' + w, 'warn'));
 const workers = S.BOT_NAMES.map((name, i) => new Worker(name, i));
@@ -744,6 +1053,7 @@ async function shutdown(sig) {
 }
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => shutdown(sig));
 
-log(`started | bots ${S.BOT_NAMES.join(', ')} | ${S.ROTATE_HOURS}h each | walk ${S.RANDOM_WALK ? 'on' : 'off'} | chat ${S.CHAT_MESSAGES ? 'on' : 'off'} | stay ${S.STAY_MINUTES}min | discord ${S.DISCORD_WEBHOOK ? 'on' : 'off'}`);
+log(`started | bots ${S.BOT_NAMES.join(', ')} | ${S.ROTATE_HOURS}h each | walk ${S.RANDOM_WALK ? 'on' : 'off'} (${S.WALK_RADIUS} blocks) | chat ${S.CHAT_MESSAGES ? 'on' : 'off'} | stay ${S.STAY_MINUTES}min | discord ${S.DISCORD_WEBHOOK ? 'on' : 'off'}`);
+log(`version mode: ${S.VERSION || 'auto-detect'} | mineflayer supports up to ${mineflayer.latestSupportedVersion || 'unknown'} | node ${process.version}`);
 rotator.start();
 startStatusPage(rotator);

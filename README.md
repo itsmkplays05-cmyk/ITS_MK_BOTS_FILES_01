@@ -1,88 +1,131 @@
-# GG BOT v7 - 3 Bot Rotation (Railway)
+# GG BOT v8
 
-Ek hi Minecraft server (Aternos) par **3 bots baari-baari se** AFK rehte hain:
+Minecraft AFK bot jo **Railway** par 24/7 chalta hai. Ek hi server par **3 bots baari-baari se** on duty rehte hain, har bot khud join, login, random walk aur reconnect karta hai.
 
 ```
-ITS_GG_BOT  ->  ITS_GG_02  ->  ITS_GG_03  ->  ITS_GG_BOT  ->  ...  (loop, hamesha)
-   3 ghante        3 ghante       3 ghante        3 ghante
+ITS_GG_01  ->  ITS_GG_02  ->  ITS_GG_03  ->  ITS_GG_01  ->  ...   (loop, hamesha)
+  3 ghante       3 ghante       3 ghante       3 ghante
 ```
 
-- Ek time par ek hi bot "on duty" hota hai.
-- 3 ghante poore hote hi **agla bot pehle join karta hai**, login hone ke baad ~10 sec saath rehte hain, phir purana bot nikal jata hai. Isse server kabhi khali nahi hota.
-- Agar agla bot join na kar paye (whitelist, naam ka issue, etc.) to purana bot server mein **rukta hai** aur teesre bot ko try kiya jata hai. Sab fail ho to 5 minute baad dobara try.
-- Join / login / random walk / anti-AFK / 30 min leave-rejoin ka logic purane bot jaisa hi hai. Har bot apne turn ke andar wahi karta hai.
+## Features
 
-## Files
+| Feature | Detail |
+|---|---|
+| Bot rotation | 3 ghante baad agla bot **pehle join** karta hai, phir purana nikalta hai. Server kabhi khali nahi hota |
+| Auto version detect | Server ka version bot khud pehchanta hai. Kuch likhna nahi padta (`SERVER_VERSION = auto`) |
+| Connection fix | Reconnect delay 5s, 10s, 20s, 40s... badhta hai. Kick ki wajah padhkar sahi time wait karta hai (throttle, whitelist, ban, full) |
+| Dead connection detect | Server se 75 sec data na aaye to bot khud reconnect kar leta hai |
+| Server offline check | Aternos band ya starting ho to bot chup-chaap wait karta hai aur server on hote hi join ho jata hai |
+| Random walk | Spawn point se maximum **100 block** ke andar idhar-udhar ghumta hai, circle walk nahi |
+| Auto login | `/login` aur `/register` apne aap (`LOGIN_PASSWORD`) |
+| Dashboard | Railway ka public URL kholo, live status dikhega (kaun on duty, agla switch kab, server online hai ya nahi) |
+| Discord logs | Optional, webhook daalo |
+
+## Files (sab root mein, koi folder nahi)
 
 | File | Kaam |
 |---|---|
-| `bot.js` | Poora bot + rotation |
-| `settings.txt` | Saari settings (naam, IP, port, password, rotation, ...) |
-| `package.json` | Libraries + Node 22 (mineflayer ko Node 22+ chahiye) |
-| `.gitignore` | `node_modules` GitHub par nahi jayega |
+| `bot.js` | Poora bot, rotation aur dashboard |
+| `settings.txt` | Saari settings (naam, IP, port, password, rotation ...) |
+| `package.json` | Libraries aur Node 22 |
+| `railway.json` | Railway start command aur auto-restart |
+| `README.md` | Ye guide |
 
-## 1) GitHub par daalo
+## Step 1: GitHub par upload
 
-1. github.com par **New repository** banao (naam: `gg-bot`). Repo ko **Private** rakho, kyunki `settings.txt` mein password / webhook hota hai.
-2. Zip ko **extract** karo. Andar ki saari files (`bot.js`, `package.json`, `settings.txt`, ...) repo mein **seedhe** upload karo (**Add file -> Upload files**). Koi extra folder nahi, `package.json` repo ke sabse upar (root) mein dikhna chahiye.
-3. **Commit changes** dabao.
+1. github.com par **New repository** banao (naam: `gg-bot`). Repo ko **Private** rakho, kyunki `settings.txt` mein password hota hai.
+2. Repo mein **Add file -> Upload files** dabao.
+3. Ye 5 files daalo: `bot.js`, `settings.txt`, `package.json`, `railway.json`, `README.md`. Zip chahiye to pehle **extract** karo, GitHub zip ko khud nahi kholta.
+4. `package.json` repo ke sabse upar (root) mein dikhna chahiye, kisi folder ke andar nahi.
+5. **Commit changes** dabao.
 
-## 2) Railway par deploy
+**Upload nahi ho raha to:**
+- Phone browser mein menu se **Desktop site** ON karo, phir Upload files kholo.
+- Ek saath nahi ho raha to files **ek-ek karke** upload karo (har baar Commit).
+- Phir bhi na chale to **Add file -> Create new file** kholo, file ka naam likho (jaise `bot.js`) aur uska poora content paste karo.
+- `.gitignore` ki zaroorat nahi hai, uske bina bhi sab chalega.
 
-1. railway.com -> **New Project -> Deploy from GitHub repo** -> apna `gg-bot` repo chuno.
-2. Build apne aap hoga (Node + `npm install`). 1-2 minute baad **Deployments -> View Logs** kholo.
+## Step 2: Railway par deploy
+
+1. railway.com -> **New Project -> Deploy from GitHub repo** -> `gg-bot` chuno.
+2. Build apne aap hoga. 1-2 minute baad **Deployments -> View Logs** kholo.
 3. Logs mein ye dikhna chahiye:
    ```
-   ROTATE rotation ON: ITS_GG_BOT -> ITS_GG_02 -> ITS_GG_03 -> (repeat) | 3 hour(s) per bot | next switch at 18:40:12
-   INFO [ITS_GG_BOT] connecting to ITS-FRIEND-ONLY-SMP.aternos.me:37984 ...
-   JOIN [ITS_GG_BOT] joined server (version 1.21.x)
+   INFO started | bots ITS_GG_01, ITS_GG_02, ITS_GG_03 | 3h each | walk on (100 blocks) ...
+   INFO version mode: auto-detect | mineflayer supports up to ...
+   INFO [ITS_GG_01] connecting to ITS-FRIEND-ONLY-SMP.aternos.me:37984 ...
+   JOIN [ITS_GG_01] joined server (version ...)
    ```
-4. Replicas **1** hi rehne do (2 kar diye to ek hi naam ke 2 bot ban jayenge).
-5. (Optional, behtar) Service **Settings -> Deploy -> Custom Start Command** mein likho: `node bot.js`. Isse redeploy par bot sahi se quit karta hai.
+4. **Replicas 1** hi rehne do. 2 kar diye to ek hi naam ke 2 bot ban jayenge.
+5. Dashboard chahiye to **Settings -> Networking -> Generate Domain** karo.
 
-Settings badalni ho to GitHub par `settings.txt` edit karo, Railway apne aap redeploy kar dega. Ya Railway ke **Variables** tab mein same naam se variable daalo (jaise `ROTATE_HOURS = 2`), wo `settings.txt` se upar chalta hai.
+Settings badalni ho to GitHub par `settings.txt` edit karo, Railway apne aap redeploy karega. Ya Railway **Variables** mein same naam se variable daalo (jaise `ROTATE_HOURS = 2`), wo `settings.txt` se upar chalta hai.
 
-## 3) Server side checklist (zaroori)
+## Server side checklist
 
-- Agar server par **whitelist ON** hai to `ITS_GG_02` aur `ITS_GG_03` ko whitelist karo, warna wo join nahi honge (bot 1 ruka rahega, rotation nahi hoga).
-- Login plugin (AuthMe) ho to naye bots pehli baar khud `/register` kar lete hain (settings wala `LOGIN_PASSWORD`). Agar plugin ek IP se kam accounts allow karta hai to limit badha do.
-- Agar server ek IP se 2 account same time par allow nahi karta to `SEAMLESS_SWITCH = off` kar do (purana pehle nikalega, phir naya aayega, ~5 sec ka gap).
+- **Whitelist ON** hai to `ITS_GG_02` aur `ITS_GG_03` ko bhi whitelist karo, warna rotation nahi hoga (bot 1 ruka rahega).
+- Login plugin (AuthMe) ho to naye bots pehli baar khud `/register` kar lete hain. Agar plugin ek IP se kam accounts allow karta hai to limit badha do.
+- Server ek IP se 2 account same time par allow nahi karta to `SEAMLESS_SWITCH = off` kar do.
+
+## Supported versions (1.x se 26.x tak)
+
+Bot version **auto detect** karta hai, lekin bot jis library (mineflayer) par chalta hai wahi decide karti hai ki kaun se version join ho sakte hain. Startup logs ki 2nd line mein dikhta hai:
+
+```
+version mode: auto-detect | mineflayer supports up to 26.1
+```
+
+- Purane versions se lekar library ke "supports up to" tak sab **auto** join hote hain.
+- Agar server usse naye version par hai (jaise 26.2 / 26.3 aur library abhi us tak nahi pahunchi), to logs mein `version mismatch` aur ek hint aayegi. Tab 3 raaste hain:
+  1. Server par **ViaVersion + ViaBackwards** plugin lagao (Aternos par Paper/Spigot ke saath plugin chalta hai). Phir bot purane version se join karke bhi naye server mein chal jata hai.
+  2. Server ka version Aternos panel se bot ke supported version par rakho.
+  3. Kuch din baad Railway par **Redeploy** karo. `package.json` mein `^` range hai, to har naye build par mineflayer ka latest version aata hai. Build cache ki wajah se purana aaye to `package.json` ka `version` number badha do aur commit karo.
 
 ## Settings (settings.txt)
 
 | Setting | Matlab | Default |
 |---|---|---|
-| `BOT_NAME`, `BOT_NAME_2`, `BOT_NAME_3` | Bots ke naam, isi order mein rotation. `BOT_NAME_4` ... `BOT_NAME_10` se aur bots jodo | ITS_GG_BOT / ITS_GG_02 / ITS_GG_03 |
-| `ROTATE_HOURS` | Ek bot kitne ghante (decimal chalega, 0 = rotation band) | 3 |
+| `BOT_NAME`, `BOT_NAME_2`, `BOT_NAME_3` | Bots ke naam, isi order mein rotation. `BOT_NAME_4` ... `BOT_NAME_10` se aur bots jodo | ITS_GG_01 / 02 / 03 |
+| `SERVER_IP`, `SERVER_PORT` | Server ka address | Aternos wala |
+| `SERVER_VERSION` | `auto` ya fixed version (jaise `1.21.4`, `26.1`) | auto |
+| `LOGIN_PASSWORD` | `/login` aur `/register` ka password | 2345678 |
+| `ROTATE_HOURS` | Ek bot kitne ghante (0 = rotation band) | 3 |
 | `SEAMLESS_SWITCH` | on = naya pehle join, purana baad mein | on |
 | `HANDOVER_OVERLAP` | Switch ke time dono kitne sec saath | 10 |
 | `HANDOVER_TIMEOUT` | Naye bot ko join hone ke liye kitne sec | 120 |
-| `SWITCH_RETRY_MINUTES` | Switch fail ho to dobara try | 5 |
-| `STATUS_LOG_MINUTES` | Logs mein status line har itne minute (0 = off) | 10 |
-| `STATUS_PAGE` | Chhota status page (on/off) | on |
-| `STAY_MINUTES`, `LEAVE_WAIT`, `REJOIN_WAIT` | Har bot apne turn mein itne minute rukkar 10 sec ke liye nikalta hai (0 = kabhi nahi) | 30 / 10 / 3 |
-| baaki | `SERVER_IP`, `SERVER_PORT`, `LOGIN_PASSWORD`, `RANDOM_WALK`, `ANTI_AFK`, `CHAT_*`, `DISCORD_*` | pehle jaisa |
-
-## Status page (optional)
-
-Railway mein service ke **Settings -> Networking -> Generate Domain** karo. Us link par jaoge to dikhega kaun sa bot on duty hai, agla switch kab hai. `/health` par `ok` aata hai. Page par server IP ya password nahi dikhta. Nahi chahiye to `STATUS_PAGE = off`.
+| `RANDOM_WALK`, `WALK_RADIUS` | Random walk on/off aur max kitne block door | on / 100 |
+| `ANTI_AFK` | Haath hilana aur sir ghumana | on |
+| `CHAT_MESSAGES` | Auto chat messages | off |
+| `STAY_MINUTES`, `LEAVE_WAIT` | Itne minute baad bot 10 sec ke liye nikalkar wapas aata hai (0 = kabhi nahi) | 30 / 10 |
+| `REJOIN_WAIT`, `REJOIN_MAX` | Reconnect delay shuruat aur maximum (seconds) | 5 / 60 |
+| `JOIN_TIMEOUT` | Join attempt ka time limit (seconds) | 60 |
+| `STALE_TIMEOUT` | Itne sec data na aaye to reconnect (0 = off) | 75 |
+| `PING_BEFORE_JOIN` | Join se pehle check ki server on hai | on |
+| `OFFLINE_RETRY` | Server band ho to kitne sec baad dobara check | 30 |
+| `STATUS_PAGE` | Dashboard on/off | on |
+| `DISCORD_*` | Discord webhook aur kya bhejna hai | webhook khali |
 
 ## Logs kaise padhein
 
 ```
-ROTATE time is up for ITS_GG_BOT -> switching to ITS_GG_02 (new bot joins first, old bot leaves after)
-JOIN   [ITS_GG_02] joined server
-LEAVE  [ITS_GG_BOT] stopping (rotation)
+ROTATE time is up for ITS_GG_01 -> switching to ITS_GG_02 (new bot joins first, old bot leaves after)
+JOIN   [ITS_GG_02] joined server (version 1.21.x)
+LEAVE  [ITS_GG_01] stopping (rotation)
 ROTATE switch done: ITS_GG_02 is on duty now | next: ITS_GG_03 at 21:40:12
-STATUS ITS_GG_02 online for 1h 3m 4s | next switch -> ITS_GG_03 in 1h 56m 56s (at 21:40:12)
+STATUS ITS_GG_02 online for 1h 3m 4s | next switch -> ITS_GG_03 in 1h 56m 56s
 ```
 
 ## Problem aaye to
 
-| Dikha | Karo |
+| Logs mein dikha | Karo |
 |---|---|
-| `ITS_GG_02 could not join ... ITS_GG_BOT stays` | Whitelist / naam / login ka issue. Pehle `kicked:` wali line padho, wahi wajah hai |
-| `ECONNREFUSED` / `could not join` baar baar | Aternos server band hai, pehle server start karo. Bots khud reconnect karte rahenge |
+| `server is offline or starting - waiting` | Aternos panel se server start karo. Bot khud join ho jayega |
+| `server is throttling fast reconnects` | Kuch nahi, bot khud zyada wait karke dobara try karta hai |
+| `bot name is not whitelisted` | Us naam ko whitelist karo |
+| `bot name is BANNED` | Naam unban karo ya `settings.txt` mein naam badlo |
+| `same name is still online` | Purana deployment band hone do, Replicas 1 rakho |
+| `no data from server ... reconnecting` | Normal self-heal hai. Baar baar aaye to `STALE_TIMEOUT` 120 kar do |
+| `version mismatch` / `unsupported protocol version` | Upar "Supported versions" section dekho |
 | `settings: ... must be a number` | `settings.txt` mein us line ki value theek karo |
 | Build fail | `package.json` repo ke root mein hona chahiye, folder ke andar nahi |
-| Do same naam ke bot dikh rahe | Railway par replicas 1 rakho, purana deployment band hone do |
+| `ITS_GG_02 could not join ... ITS_GG_01 stays` | Whitelist / naam / login ka issue. Pehle `kicked:` wali line padho |
