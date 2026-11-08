@@ -1,14 +1,45 @@
-BOT_NAME = ITS_GG_BOT
+# =====================================================
+#   GG BOT SETTINGS  (lines starting with # are comments)
+#   Format:  KEY = value        on / off for switches
+# =====================================================
+
+# ---------- BOTS (rotation order: 1 -> 2 -> 3 -> 1 ...) ----------
+# Bot 1 starts first. Naam yahin se badal sakte ho.
+BOT_NAME = ITS_GG_01
+BOT_NAME_2 = ITS_GG_02
+BOT_NAME_3 = ITS_GG_03
+# Aur bots chahiye to BOT_NAME_4 ... BOT_NAME_10 add kar do.
+
+# ---------- SERVER (sab bots isi server mein join honge) ----------
 SERVER_IP = ITS-FRIEND-ONLY-SMP.aternos.me
 SERVER_PORT = 37984
 SERVER_VERSION = auto
 LOGIN_PASSWORD = 2345678
 
+# ---------- ROTATION ----------
+# Ek bot kitne ghante server mein rahega, uske baad agla bot aayega (0 = rotation band)
+ROTATE_HOURS = 3
+# on  = agla bot pehle join karta hai, phir purana nikalta hai (server kabhi khali nahi hota)
+# off = purana pehle nikalta hai, phir naya join karta hai (agar server 1 IP se 2 bot allow nahi karta)
+SEAMLESS_SWITCH = on
+# Switch ke time dono bot kitne second saath rahenge
+HANDOVER_OVERLAP = 10
+# Agla bot itne second mein join na kar paye to purana bot hi rukta hai
+HANDOVER_TIMEOUT = 120
+# Koi bhi bot switch na kar paye to itne minute baad dobara try
+SWITCH_RETRY_MINUTES = 5
+# Har itne minute mein logs mein status line (0 = off)
+STATUS_LOG_MINUTES = 10
+# Chhota status page (Railway ka public URL kholne par dikhega). off = band
+STATUS_PAGE = on
+
+# ---------- WALK / AFK ----------
 RANDOM_WALK = on
 WALK_RADIUS = 100
 WALK_START_DELAY = 10
 ANTI_AFK = on
 
+# ---------- CHAT ----------
 CHAT_MESSAGES = off
 CHAT_DELAY = 25
 MESSAGE = MADE BY Pipka
@@ -18,10 +49,12 @@ MESSAGE = DONT USE XRAY ETC MODE DIRECT BAN
 MESSAGE = DON'T ABUSE WITH PLAYERS
 MESSAGE = THANKS FOR COME
 
+# ---------- STAY / REJOIN (har bot apne turn ke andar ye karta hai) ----------
 STAY_MINUTES = 30
 LEAVE_WAIT = 10
 REJOIN_WAIT = 3
 
+# ---------- DISCORD ----------
 DISCORD_WEBHOOK =
 DISCORD_NAME = GG_BOT Logs
 DISCORD_CHAT = on

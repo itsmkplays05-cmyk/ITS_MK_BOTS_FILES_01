@@ -1,9 +1,10 @@
 {
   "name": "gg-bot",
-  "version": "6.0.0",
+  "version": "7.0.0",
+  "description": "Minecraft AFK bot - 3 bots rotate every 3 hours (Railway ready)",
   "main": "bot.js",
   "scripts": { "start": "node bot.js" },
-  "engines": { "node": ">=18" },
+  "engines": { "node": "22" },
   "dependencies": {
     "minecraft-data": "^3.60.0",
     "mineflayer": "^4.20.1",
