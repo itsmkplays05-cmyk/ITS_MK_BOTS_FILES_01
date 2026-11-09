@@ -15,6 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 const mineflayer = require('mineflayer');
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 
@@ -31,6 +32,7 @@ const DEFAULTS = {
   SERVER_IP: 'ITS-FRIEND-ONLY-SMP.aternos.me',
   SERVER_PORT: 37984,
   SERVER_VERSION: 'auto',
+  VERSION_FALLBACKS: '1.21.11, 1.21.8, 1.21.4, 1.20.4', // tried one by one if a join hangs on auto detect (needs ViaBackwards on newer servers)
   LOGIN_PASSWORD: '2345678',
 
   ROTATE_HOURS: 3,
@@ -41,6 +43,8 @@ const DEFAULTS = {
   STATUS_LOG_MINUTES: 10,
   STATUS_PAGE: true,
   STATUS_PORT: 3000,
+  CONSOLE_LINES: 500,      // lines kept for the live console on the dashboard
+  DASHBOARD_PASSWORD: '',  // empty = public page, otherwise the page asks for this password
 
   RANDOM_WALK: true,
   WALK_RADIUS: 100,
@@ -60,6 +64,7 @@ const DEFAULTS = {
   STALE_TIMEOUT: 75,       // no data from the server for this long = dead connection (0 = off)
   PING_BEFORE_JOIN: true,  // check that the server is up before joining (saves spam)
   OFFLINE_RETRY: 15,       // wait this long when the server is offline / starting (seconds)
+  JOIN_HANG_SECONDS: 30,   // connected but no login after this long = try the next version (0 = off)
 
   DISCORD_WEBHOOK: '',
   DISCORD_NAME: 'GG_BOT Logs',
@@ -118,10 +123,14 @@ function loadSettings() {
   }
   S.VERSION = /^(auto|latest|)$/i.test(S.SERVER_VERSION) ? false : S.SERVER_VERSION;
   S.SERVER_PORT = Math.floor(S.SERVER_PORT) || 25565;
+  const sup = Array.isArray(mineflayer.supportedVersions) ? mineflayer.supportedVersions : null;
+  S.FALLBACKS = String(S.VERSION_FALLBACKS || '').split(',').map(v => v.trim()).filter(v => v && (!sup || sup.includes(v)));
   S.REJOIN_WAIT = Math.max(S.REJOIN_WAIT, 1);
   S.REJOIN_MAX = Math.max(S.REJOIN_MAX, S.REJOIN_WAIT);
   S.JOIN_TIMEOUT = Math.max(S.JOIN_TIMEOUT, 15);
   S.OFFLINE_RETRY = Math.max(S.OFFLINE_RETRY, 5);
+  S.CONSOLE_LINES = Math.min(Math.max(Math.floor(S.CONSOLE_LINES) || 500, 50), 2000);
+  if (S.JOIN_HANG_SECONDS > 0) S.JOIN_HANG_SECONDS = Math.max(S.JOIN_HANG_SECONDS, 10);
   if (S.STALE_TIMEOUT > 0) S.STALE_TIMEOUT = Math.max(S.STALE_TIMEOUT, 30);
 
   const names = [], seen = new Set();
@@ -209,9 +218,24 @@ async function flush() {
     }
   } finally { sending = false; }
 }
+// Live console buffer (shown on the dashboard). Server IP, password and webhook are hidden here.
+const consoleBuf = [];
+let consoleId = 0;
+function redact(text) {
+  let t = String(text);
+  if (S.SERVER_IP) t = t.split(S.SERVER_IP).join('<server>');
+  if (S.LOGIN_PASSWORD && String(S.LOGIN_PASSWORD).length >= 4) t = t.split(String(S.LOGIN_PASSWORD)).join('***');
+  if (S.DISCORD_WEBHOOK) t = t.split(S.DISCORD_WEBHOOK).join('<webhook>');
+  return t;
+}
+function pushConsole(kind, who, msg) {
+  consoleBuf.push({ id: ++consoleId, t: Date.now(), kind, tag: TAG[kind] || 'INFO', who, msg: redact(msg).slice(0, 400) });
+  if (consoleBuf.length > S.CONSOLE_LINES) consoleBuf.shift();
+}
 function log(msg, kind = 'info', who = '') {
   const line = `[${stamp()}] ${TAG[kind] || 'INFO'}${who ? ' [' + who + ']' : ''} ${msg}`;
   console.log(line);
+  try { pushConsole(kind, who, String(msg)); } catch (_) {}
   if (allowedOnDiscord(kind)) toDiscord(line);
 }
 
@@ -313,6 +337,7 @@ async function probeServer() {
     result = {
       state: sleeping ? 'offline' : 'online',
       version: vname.replace(/§./g, '').trim() || null,
+      protocol: r && r.version ? r.version.protocol : null,
       players: r && r.players ? r.players.online : null,
       max: r && r.players ? r.players.max : null
     };
@@ -325,7 +350,29 @@ async function probeServer() {
 }
 
 // ============================ SHARED STATE ============================
-const shared = { forcedVersion: null, forcedAt: 0, versionHintAt: 0 }; // server version problem is the same for every bot
+const shared = { forcedVersion: null, forcedAt: 0, versionHintAt: 0, goodVersion: null, ladderPos: 0 }; // server version problem is the same for every bot
+
+// Version ladder: auto detect first, then the fallback versions from settings (only when a join hangs or is refused as outdated).
+const LADDER = [false];
+if (String(S.VERSION_FALLBACKS || '').trim()) {
+  [mineflayer.latestSupportedVersion, ...S.FALLBACKS].forEach(v => { if (v && !LADDER.includes(v)) LADDER.push(v); });
+}
+// Does the installed library speak this protocol natively? (true / false / null = unknown)
+function nativeSupported(protocol) {
+  try {
+    const md = require('minecraft-data');
+    const by = md.postNettyVersionsByProtocolVersion && md.postNettyVersionsByProtocolVersion.pc;
+    if (!by) return null;
+    return Array.isArray(by[protocol]) ? by[protocol].length > 0 : !!by[protocol];
+  } catch (_) { return null; }
+}
+function advanceLadder(who, from, why) {
+  if (S.VERSION || shared.forcedVersion || LADDER.length < 2) return;
+  shared.ladderPos = (shared.ladderPos + 1) % LADDER.length;
+  const next = LADDER[shared.ladderPos];
+  log(`${why} with version ${from || 'auto'} - next try uses ${next || 'auto detect'}`, 'warn', who);
+  if (shared.ladderPos === 0) versionHint();
+}
 let shuttingDown = false;
 
 function versionHint() {
@@ -333,7 +380,7 @@ function versionHint() {
   if (Date.now() - shared.versionHintAt < 600000) return;
   shared.versionHintAt = Date.now();
   log(`the installed mineflayer supports up to Minecraft ${latest}, but the server runs a newer/different version. ` +
-    'Fix: (1) install ViaVersion + ViaBackwards on the server, or (2) set the server to a supported version, or ' +
+    'Fix: (1) install BOTH ViaVersion and ViaBackwards on the server (ViaBackwards is the one that lets older bots join), or (2) set the server to a supported version, or ' +
     '(3) redeploy later - a fresh Railway build pulls the newest mineflayer automatically. See README "Supported versions".', 'warn');
 }
 
@@ -467,11 +514,12 @@ class Worker {
     } else {
       this.failsInRow++;
       this.log(`could not join: ${reason}`, 'warn');
+      if (shared.goodVersion) { shared.goodVersion = null; shared.ladderPos = 0; } // server may have changed version: detect again
     }
     this.joinedAt = 0;
     const plan = retryPlan(reason, this.failsInRow);
     if (plan.note) this.log(plan.note, 'warn');
-    if (plan.versionProblem) versionHint();
+    if (plan.versionProblem) { advanceLadder(this.name, this.lastVer, 'version refused'); versionHint(); }
     this.scheduleRejoin(plan.wait, reason);
   }
 
@@ -576,7 +624,14 @@ class Worker {
     this.settled = false;
     this.lastKick = '';
     if (shared.forcedVersion && Date.now() - shared.forcedAt > 30 * 60000) shared.forcedVersion = null; // re-try auto detect
-    const ver = shared.forcedVersion || S.VERSION;
+    const ver = shared.forcedVersion || S.VERSION || shared.goodVersion || LADDER[shared.ladderPos] || false;
+    this.lastVer = ver;
+    const pr = probe.result || {};
+    if (pr.version) this.log(`server reports "${pr.version}"${pr.protocol ? ' (protocol ' + pr.protocol + ')' : ''}`);
+    if (pr.protocol && !shared.newerNoted && nativeSupported(pr.protocol) === false) {
+      shared.newerNoted = true;
+      this.log(`server speaks protocol ${pr.protocol}, newer than this bot library (supports up to ${mineflayer.latestSupportedVersion || '?'}) - the bot joins through ViaBackwards on the server using an older version`, 'warn');
+    }
     this.log(`connecting to ${S.SERVER_IP}:${S.SERVER_PORT} as ${this.name} (version ${ver || 'auto'}) try #${this.attempts}`);
     let b;
     try {
@@ -651,19 +706,25 @@ class Worker {
     if (b.physics) b.physics.enabled = false;
 
     b.once('login', () => { stage = 'login'; });
-    this.timers.push(setTimeout(() => {
-      if (this.joinedAt) return;
+    const stuck = early => {
+      if (this.joinedAt || b !== this.bot) return;
+      const serverUp = (probe.result && probe.result.state) === 'online';
+      if (early && !(stage === 'tcp' && serverUp)) return; // early check only for "connected but silent"
       const why = stage === 'login' ? 'logged in but never spawned (world still loading)'
-        : stage === 'tcp' ? 'connected, but the server never finished the login (still starting, or very laggy)'
+        : stage === 'tcp' ? 'connected, but the server never finished the login (version mismatch, or server still starting)'
         : 'no answer from the server (offline, still starting, or wrong IP / port)';
       this.log(`join stuck at stage "${stage}": ${why}`, 'warn');
-      this.handleEnd(b, `join timeout ${S.JOIN_TIMEOUT}s`);
-    }, S.JOIN_TIMEOUT * 1000));
+      if (stage !== 'none' || serverUp) advanceLadder(this.name, ver, 'join hung');
+      this.handleEnd(b, `join timeout ${early ? S.JOIN_HANG_SECONDS : S.JOIN_TIMEOUT}s`);
+    };
+    if (S.JOIN_HANG_SECONDS > 0 && S.JOIN_HANG_SECONDS < S.JOIN_TIMEOUT) this.timers.push(setTimeout(() => stuck(true), S.JOIN_HANG_SECONDS * 1000));
+    this.timers.push(setTimeout(() => stuck(false), S.JOIN_TIMEOUT * 1000));
 
     b.once('spawn', () => {
       if (b !== this.bot) return; // this bot was switched off while it was still joining
       this.joinedAt = Date.now(); this.failsInRow = 0; this.online = true;
       lastPacket = Date.now();
+      if (!S.VERSION) { shared.goodVersion = b.version; shared.ladderPos = 0; } // remember what worked
       this.log(`joined server (version ${b.version})`, 'join');
       this.timers.push(setTimeout(() => { ready = true; }, 4000));
 
@@ -911,8 +972,15 @@ class Rotator {
       server: {
         state: pr.state || 'unknown',
         version: pr.version || null,
+        protocol: pr.protocol == null ? null : pr.protocol,
         players: pr.players == null ? null : pr.players,
         maxPlayers: pr.max == null ? null : pr.max
+      },
+      connection: {
+        botVersion: shared.goodVersion || shared.forcedVersion || S.VERSION || null,
+        ladder: LADDER.map(v => v || 'auto'),
+        ladderPos: shared.ladderPos,
+        libraryMax: mineflayer.latestSupportedVersion || null
       },
       rotation: {
         enabled: this.enabled,
@@ -932,6 +1000,7 @@ class Rotator {
         online: w.online,
         ready: w.settled,
         onlineFor: w.online && w.joinedAt ? fmtDur(now - w.joinedAt) : null,
+        version: w.online && w.bot ? w.bot.version || null : null,
         tries: w.attempts
       }))
     };
@@ -944,76 +1013,202 @@ class Rotator {
 const DASHBOARD_HTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GG BOT Dashboard</title>
+<meta name="color-scheme" content="light dark">
+<title>GG BOT Console</title>
 <style>
-:root{--bg:#f4f6f9;--card:#ffffff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--accent:#2563eb}
-@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--card:#151b23;--text:#e6edf3;--muted:#8b949e;--line:#262d38;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--accent:#58a6ff}}
+:root{--bg:#f3f5f9;--card:#ffffff;--text:#0f172a;--muted:#64748b;--line:#e2e8f0;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--accent:#6366f1;--accent2:#06b6d4;--shadow:0 1px 2px rgba(15,23,42,.06),0 8px 24px rgba(15,23,42,.06)}
+@media (prefers-color-scheme:dark){:root{--bg:#0a0e14;--card:#121821;--text:#e6edf3;--muted:#8b98a9;--line:#212a37;--ok:#3fb950;--warn:#e3b341;--bad:#f85149;--accent:#818cf8;--accent2:#22d3ee;--shadow:0 1px 2px rgba(0,0,0,.4),0 8px 28px rgba(0,0,0,.35)}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-main{max-width:860px;margin:0 auto;padding:24px 16px 48px}
-h1{font-size:20px;margin:0 0 4px}
-.sub{color:var(--muted);font-size:13px;margin-bottom:20px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
-.k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
-.v{font-size:18px;font-weight:600;margin-top:2px;word-break:break-word}
-table{width:100%;border-collapse:collapse}
-th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);font-size:14px}
-th{color:var(--muted);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
-tr:last-child td{border-bottom:0}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;-webkit-font-smoothing:antialiased}
+main{max-width:1000px;margin:0 auto;padding:20px 16px 44px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px}
+.logo{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;color:#fff;font-weight:800;font-size:14px;letter-spacing:.5px}
+h1{font-size:18px;margin:0;line-height:1.2}
+.sub{color:var(--muted);font-size:12.5px}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border-radius:999px;background:var(--card);border:1px solid var(--line);font-size:13px;font-weight:600;box-shadow:var(--shadow)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.dot.ok{background:var(--ok);animation:pulse 2s infinite}
+.dot.warn{background:var(--warn)}
+.dot.bad{background:var(--bad)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.55)}70%{box-shadow:0 0 0 8px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:12px;margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px 16px;box-shadow:var(--shadow)}
+.k{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;font-weight:600}
+.v{font-size:19px;font-weight:700;margin-top:3px;word-break:break-word}
+.s{color:var(--muted);font-size:12.5px;margin-top:2px;word-break:break-word}
 .scroll{overflow-x:auto}
-.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;color:#fff}
-.on{background:var(--ok)}.wait{background:var(--warn)}.off{background:var(--muted)}.bad{background:var(--bad)}
-.duty{color:var(--accent);font-weight:600}
-.foot{color:var(--muted);font-size:12px;margin-top:14px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);font-size:14px;white-space:nowrap}
+th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em}
+tr:last-child td{border-bottom:0}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:700;color:#fff}
+.b-on{background:var(--ok)}.b-wait{background:var(--warn)}.b-off{background:var(--muted)}
+.duty{color:var(--accent);font-weight:700}
+.term-card{padding:0;overflow:hidden;margin-top:14px}
+.bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 14px;border-bottom:1px solid var(--line)}
+.bar h2{font-size:14px;margin:0 auto 0 0;display:flex;align-items:center;gap:8px}
+.cnt{color:var(--muted);font-size:12px;font-weight:500}
+.chip{border:1px solid var(--line);background:transparent;color:var(--muted);padding:4px 11px;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn{border:1px solid var(--line);background:var(--card);color:var(--text);padding:5px 11px;border-radius:9px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+.btn:hover,.chip:hover{border-color:var(--accent)}
+#term{height:min(60vh,460px);overflow:auto;background:#0b0f14;color:#d6deeb;font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:10px 12px;-webkit-overflow-scrolling:touch}
+.ln{white-space:pre-wrap;word-break:break-word;padding:1px 0}
+.ts{color:#5b6b7f;margin-right:8px}
+.tg{display:inline-block;min-width:76px;margin-right:6px;font-weight:700;color:#64748b}
+.who{color:#7aa2f7;margin-right:6px}
+.k-chat .tg{color:#a5b4fc}
+.k-join .tg,.k-player_join .tg{color:#4ade80}
+.k-leave .tg,.k-player_leave .tg,.k-warn .tg{color:#fbbf24}
+.k-kick .tg,.k-error .tg,.k-death .tg{color:#f87171}
+.k-reconnect .tg{color:#fb923c}
+.k-rotate .tg{color:#22d3ee}
+.k-error .msg,.k-kick .msg{color:#fca5a5}
+.k-warn .msg{color:#fde68a}
+.k-move .msg,.k-status .msg{color:#8b98a9}
+.foot{color:var(--muted);font-size:12px;margin-top:14px;text-align:center}
 </style></head>
 <body><main>
-<h1>GG BOT Dashboard</h1>
-<div class="sub" id="sub">Loading...</div>
+<header>
+<div class="brand"><div class="logo">GG</div><div><h1>GG BOT Console</h1><div class="sub" id="sub">Loading...</div></div></div>
+<div class="pill"><span class="dot" id="pdot"></span><span id="ptxt">Connecting</span></div>
+</header>
 <div class="grid">
-<div class="card"><div class="k">On duty</div><div class="v" id="duty">-</div></div>
-<div class="card"><div class="k">Next switch in</div><div class="v" id="next">-</div></div>
-<div class="card"><div class="k">Server</div><div class="v" id="srv">-</div></div>
-<div class="card"><div class="k">Uptime</div><div class="v" id="up">-</div></div>
+<div class="card"><div class="k">On duty</div><div class="v" id="duty">-</div><div class="s" id="duty2">&nbsp;</div></div>
+<div class="card"><div class="k">Next switch in</div><div class="v" id="next">-</div><div class="s" id="next2">&nbsp;</div></div>
+<div class="card"><div class="k">Server</div><div class="v" id="srv">-</div><div class="s" id="srv2">&nbsp;</div></div>
+<div class="card"><div class="k">Bot joins as</div><div class="v" id="ver">-</div><div class="s" id="ver2">&nbsp;</div></div>
 </div>
 <div class="card scroll"><table>
-<thead><tr><th>Bot</th><th>State</th><th>Online for</th><th>Tries</th></tr></thead>
+<thead><tr><th>Bot</th><th>State</th><th>Online for</th><th>Version</th><th>Tries</th></tr></thead>
 <tbody id="rows"></tbody></table></div>
-<div class="foot">Auto refresh every 5 seconds. JSON: /api/status</div>
+<div class="card term-card">
+<div class="bar">
+<h2>Live console <span class="cnt" id="cnt"></span></h2>
+<button class="chip on" data-f="all">All</button>
+<button class="chip" data-f="chat">Chat</button>
+<button class="chip" data-f="players">Players</button>
+<button class="chip" data-f="bots">Bots</button>
+<button class="chip" data-f="problems">Problems</button>
+<button class="btn" id="pause">Pause</button>
+<button class="btn" id="clear">Clear</button>
+<button class="btn" id="copy">Copy</button>
+</div>
+<div id="term"></div>
+</div>
+<div class="foot">Live updates. Status JSON: /api/status</div>
 </main>
 <script>
-function el(tag, cls, text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;}
-function setText(id, t){document.getElementById(id).textContent=t;}
+var GROUPS={chat:'chat',player_join:'players',player_leave:'players',warn:'problems',error:'problems',kick:'problems'};
+var filter='all',paused=false,lastId=0,lines=[],MAX=800;
+var term=document.getElementById('term');
+function grp(k){return GROUPS[k]||'bots';}
+function visible(l){return filter==='all'||grp(l.kind)===filter;}
+function pad(n){return (n<10?'0':'')+n;}
+function hhmmss(ms){var d=new Date(ms);return pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());}
+function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;}
+function setText(id,t){document.getElementById(id).textContent=t;}
+function mk(l){
+  var d=el('div','ln k-'+l.kind);
+  d.appendChild(el('span','ts',hhmmss(l.t)));
+  d.appendChild(el('span','tg',l.tag));
+  if(l.who)d.appendChild(el('span','who','['+l.who+']'));
+  d.appendChild(el('span','msg',l.msg));
+  return d;
+}
+function nearBottom(){return term.scrollHeight-term.scrollTop-term.clientHeight<70;}
+function count(){var n=0;lines.forEach(function(l){if(visible(l))n++;});setText('cnt',n+' lines'+(paused?' (paused)':''));}
+function renderAll(){
+  term.textContent='';
+  var f=document.createDocumentFragment();
+  lines.forEach(function(l){if(visible(l))f.appendChild(mk(l));});
+  term.appendChild(f);term.scrollTop=term.scrollHeight;count();
+}
+function append(items){
+  var stick=nearBottom();
+  items.forEach(function(l){lines.push(l);if(!paused&&visible(l))term.appendChild(mk(l));});
+  if(lines.length>MAX+100){lines=lines.slice(-MAX);if(!paused)renderAll();}
+  else if(!paused&&stick)term.scrollTop=term.scrollHeight;
+  count();
+}
+function poll(){
+  fetch('/api/logs?since='+lastId,{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
+    if(d.reset){lines=[];term.textContent='';}
+    if(d.lines&&d.lines.length)append(d.lines);
+    lastId=d.last;
+  }).catch(function(){}).then(function(){setTimeout(poll,1500);});
+}
+var chips=document.querySelectorAll('.chip');
+chips.forEach(function(c){c.addEventListener('click',function(){
+  filter=c.getAttribute('data-f');
+  chips.forEach(function(x){x.classList.toggle('on',x===c);});
+  renderAll();
+});});
+var pb=document.getElementById('pause');
+pb.addEventListener('click',function(){paused=!paused;pb.textContent=paused?'Resume':'Pause';if(!paused)renderAll();else count();});
+document.getElementById('clear').addEventListener('click',function(){lines=[];term.textContent='';count();});
+var cb=document.getElementById('copy');
+cb.addEventListener('click',function(){
+  var t=lines.filter(visible).map(function(l){return hhmmss(l.t)+' '+l.tag+(l.who?' ['+l.who+']':'')+' '+l.msg;}).join(String.fromCharCode(10));
+  var done=function(){cb.textContent='Copied';setTimeout(function(){cb.textContent='Copy';},1200);};
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){});}
+});
+function setPill(cls,txt){document.getElementById('pdot').className='dot '+cls;setText('ptxt',txt);}
 function render(d){
-  var r=d.rotation, s=d.server||{};
-  setText('duty', r.activeBot);
-  setText('next', r.enabled ? r.nextSwitchIn : 'rotation off');
-  var srv = s.state==='online' ? 'Online' : (s.state==='offline' ? 'Offline / starting' : 'Unknown');
-  if (s.state==='online' && s.players!==null) srv += ' (' + s.players + '/' + s.maxPlayers + ')';
-  setText('srv', srv);
-  setText('up', d.uptime);
-  setText('sub', 'Order: ' + r.order.join(' > ') + ' | ' + r.hoursPerBot + 'h per bot | switches done: ' + r.switchesDone);
-  var body=document.getElementById('rows'); body.textContent='';
+  var r=d.rotation,s=d.server||{},c=d.connection||{};
+  var active=null;d.bots.forEach(function(b){if(b.name===r.activeBot)active=b;});
+  var anyReady=d.bots.some(function(b){return b.online&&b.ready;});
+  if(anyReady)setPill('ok','Bot online');
+  else if(s.state==='offline')setPill('bad','Server offline');
+  else setPill('warn','Connecting');
+  setText('sub','Uptime '+d.uptime+' | switches done '+r.switchesDone);
+  setText('duty',r.activeBot);
+  setText('duty2',active&&active.online?'online for '+active.onlineFor:'not online yet');
+  setText('next',r.enabled?r.nextSwitchIn:'Rotation off');
+  setText('next2',r.enabled?'then '+r.nextBot:'only one bot runs');
+  var srv=s.state==='online'?'Online':(s.state==='offline'?'Offline / starting':'Unknown');
+  if(s.state==='online'&&s.players!==null)srv+=' ('+s.players+'/'+s.maxPlayers+')';
+  setText('srv',srv);
+  setText('srv2',s.version?'reports '+s.version+(s.protocol?' (protocol '+s.protocol+')':''):'no ping data yet');
+  var cur=(active&&active.version)||c.botVersion;
+  setText('ver',cur?cur:'auto detect');
+  setText('ver2','tries: '+(c.ladder||[]).join(' > ')+(c.libraryMax?' | library max '+c.libraryMax:''));
+  var body=document.getElementById('rows');body.textContent='';
   d.bots.forEach(function(b){
-    var tr=el('tr'), name=el('td', b.name===r.activeBot?'duty':'', b.name);
-    var st=el('td'), label, cls;
-    if(b.online&&b.ready){label='Online';cls='on';}
-    else if(b.online){label='Logging in';cls='wait';}
-    else if(b.active){label='Connecting';cls='wait';}
-    else {label='Standby';cls='off';}
+    var tr=el('tr');
+    tr.appendChild(el('td',b.name===r.activeBot?'duty':'',b.name));
+    var st=el('td'),label,cls;
+    if(b.online&&b.ready){label='Online';cls='b-on';}
+    else if(b.online){label='Logging in';cls='b-wait';}
+    else if(b.active){label='Connecting';cls='b-wait';}
+    else{label='Standby';cls='b-off';}
     st.appendChild(el('span','badge '+cls,label));
-    tr.appendChild(name);tr.appendChild(st);
+    tr.appendChild(st);
     tr.appendChild(el('td','',b.onlineFor||'-'));
+    tr.appendChild(el('td','',b.version||'-'));
     tr.appendChild(el('td','',String(b.tries)));
     body.appendChild(tr);
   });
 }
 function load(){
   fetch('/api/status',{cache:'no-store'}).then(function(r){return r.json();}).then(render)
-  .catch(function(){setText('sub','Cannot reach the bot right now, retrying...');});
+  .catch(function(){setPill('bad','Dashboard offline');});
 }
-load(); setInterval(load, 5000);
+load();setInterval(load,4000);poll();
 </script></body></html>`;
+
+// Optional password for the dashboard (DASHBOARD_PASSWORD). /health stays open for Railway.
+function authorized(req) {
+  if (!S.DASHBOARD_PASSWORD) return true;
+  const h = String(req.headers.authorization || '');
+  if (!h.startsWith('Basic ')) return false;
+  const given = Buffer.from(h.slice(6), 'base64').toString('utf8');
+  const pass = Buffer.from(given.slice(given.indexOf(':') + 1));
+  const want = Buffer.from(String(S.DASHBOARD_PASSWORD));
+  return pass.length === want.length && crypto.timingSafeEqual(pass, want);
+}
 
 let statusServer = null;
 function startStatusPage(rot) {
@@ -1021,18 +1216,33 @@ function startStatusPage(rot) {
   const port = Number(process.env.PORT) || S.STATUS_PORT;
   statusServer = http.createServer((req, res) => {
     try {
-      const url = String(req.url || '/').split('?')[0];
+      const u = new URL(req.url || '/', 'http://localhost');
+      const url = u.pathname;
       if (url === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
+      if (!authorized(req)) {
+        res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="GG BOT", charset="UTF-8"', 'Content-Type': 'text/plain' });
+        return res.end('Login required');
+      }
+      const json = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
       if (url === '/api/status' || url === '/status') {
-        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.writeHead(200, json);
         return res.end(JSON.stringify(rot.snapshot(), null, 2));
+      }
+      if (url === '/api/logs') {
+        let since = Number(u.searchParams.get('since')) || 0;
+        let reset = false;
+        if (since > consoleId) { since = 0; reset = true; } // bot restarted: send everything again
+        let lines = consoleBuf.filter(l => l.id > since);
+        if (lines.length > 400) lines = lines.slice(-400);
+        res.writeHead(200, json);
+        return res.end(JSON.stringify({ reset, last: consoleId, lines }));
       }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(DASHBOARD_HTML);
     } catch (_) { try { res.writeHead(500); res.end('error'); } catch (_) {} }
   });
-  statusServer.on('error', err => log('status page: ' + err.message, 'warn'));
-  statusServer.listen(port, '0.0.0.0', () => log(`dashboard is on port ${port} (/ = dashboard, /api/status = json, /health = ok)`));
+  statusServer.on('error', err => log('dashboard: ' + err.message, 'warn'));
+  statusServer.listen(port, '0.0.0.0', () => log(`dashboard is on port ${port} (/ = live console, /api/status = json, /health = ok)${S.DASHBOARD_PASSWORD ? ' | password protected' : ' | public (set DASHBOARD_PASSWORD to protect it)'}`));
 }
 
 // ============================ RUN ============================
@@ -1068,6 +1278,6 @@ async function shutdown(sig) {
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => shutdown(sig));
 
 log(`started | bots ${S.BOT_NAMES.join(', ')} | ${S.ROTATE_HOURS}h each | walk ${S.RANDOM_WALK ? 'on' : 'off'} (${S.WALK_RADIUS} blocks) | chat ${S.CHAT_MESSAGES ? 'on' : 'off'} | stay ${S.STAY_MINUTES}min | discord ${S.DISCORD_WEBHOOK ? 'on' : 'off'}`);
-log(`version mode: ${S.VERSION || 'auto-detect'} | mineflayer supports up to ${mineflayer.latestSupportedVersion || 'unknown'} | node ${process.version}`);
+log(`version mode: ${S.VERSION || 'auto-detect' + (LADDER.length > 1 ? ' + fallbacks ' + LADDER.slice(1).join(', ') : '')} | mineflayer supports up to ${mineflayer.latestSupportedVersion || 'unknown'} | node ${process.version}`);
 rotator.start();
 startStatusPage(rotator);

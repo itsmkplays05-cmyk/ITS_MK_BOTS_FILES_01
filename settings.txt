@@ -28,6 +28,14 @@ SERVER_PORT    = 37984
 # Or write a fixed version, for example: 1.21.4  or  26.1
 SERVER_VERSION = auto
 
+# Used only when SERVER_VERSION = auto and a join hangs or is refused.
+# Order tried: auto -> newest version the library knows -> these, one by one.
+# The bot remembers the version that works.
+# Servers newer than the library (Minecraft 26.2 / 26.3) need the ViaVersion
+# AND ViaBackwards plugins on the server for this to work.
+# Leave empty to use auto detect only.
+VERSION_FALLBACKS = 1.21.11, 1.21.8, 1.21.4, 1.20.4
+
 # Used for /login and /register (AuthMe style plugins). Empty = no login.
 LOGIN_PASSWORD = 2345678
 
@@ -113,6 +121,10 @@ PING_BEFORE_JOIN = on
 # Seconds between checks while the server is offline / starting.
 OFFLINE_RETRY = 15
 
+# Connected to the server but no login after this many seconds = the version
+# does not fit, so the next version is tried. 0 = off.
+JOIN_HANG_SECONDS = 30
+
 
 # ---------------------------------------------------------------------
 #  8. LOGS + DASHBOARD
@@ -123,6 +135,14 @@ STATUS_LOG_MINUTES = 10
 # Live dashboard on the Railway public URL ( / ). JSON on /api/status.
 # It never shows the server IP or any password. off = disable.
 STATUS_PAGE = on
+
+# Lines kept in the live console on the dashboard (50 - 2000).
+CONSOLE_LINES = 500
+
+# Empty = anyone with the link can open the dashboard (server IP and password
+# are always hidden). Set a password to protect it: the browser will ask for
+# it (user name can be anything). Recommended, because the console shows chat.
+DASHBOARD_PASSWORD =
 
 TIMEZONE = Asia/Kolkata
 
