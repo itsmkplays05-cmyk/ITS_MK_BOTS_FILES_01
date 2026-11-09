@@ -1,5 +1,5 @@
 # =====================================================================
-#   GG BOT v8  -  SETTINGS
+#   GG BOT v9  -  SETTINGS
 # =====================================================================
 #   Format  : KEY = value          (switches use  on / off)
 #   Comment : lines starting with # are ignored
@@ -24,17 +24,18 @@ BOT_NAME_3 = ITS_GG_03
 SERVER_IP      = ITS-FRIEND-ONLY-SMP.aternos.me
 SERVER_PORT    = 37984
 
-# auto  = detect the server version by itself (recommended)
+# auto = SMART join (recommended). The bot pings the server, picks the exact
+#        version by itself, and if that fails it tries ALL versions one by one,
+#        newest -> oldest. If the server tells "use 1.20.4" it jumps straight there.
+#        The version that works is remembered.
 # Or write a fixed version, for example: 1.21.4  or  26.1
 SERVER_VERSION = auto
 
-# Used only when SERVER_VERSION = auto and a join hangs or is refused.
-# Order tried: auto -> newest version the library knows -> these, one by one.
-# The bot remembers the version that works.
-# Servers newer than the library (Minecraft 26.2 / 26.3) need the ViaVersion
-# AND ViaBackwards plugins on the server for this to work.
-# Leave empty to use auto detect only.
-VERSION_FALLBACKS = 1.21.11, 1.21.8, 1.21.4, 1.20.4
+# Optional. Versions tried FIRST when the detected one fails (comma separated).
+# Leave empty - all versions are tried anyway.
+# Servers NEWER than the library (Minecraft 26.2 / 26.3) need the ViaVersion
+# AND ViaBackwards plugins on the server.
+VERSION_FALLBACKS =
 
 # Used for /login and /register (AuthMe style plugins). Empty = no login.
 LOGIN_PASSWORD = 2345678
@@ -66,11 +67,14 @@ SWITCH_RETRY_MINUTES = 5
 # ---------------------------------------------------------------------
 # The bot walks to random places and never goes further than
 # WALK_RADIUS blocks away from where it spawned (no circle walking).
+# After joining it stays completely still for WALK_START_DELAY seconds
+# (minimum 10) - no movement packets - then starts walking.
 RANDOM_WALK      = on
 WALK_RADIUS      = 100
 WALK_START_DELAY = 10
 
-# Arm swing + small head movement so the server does not kick for AFK.
+# Arm swing, head turn, jump and small steps so AFK plugins do not kick.
+# If the server kicks for AFK anyway, the bot moves more after that.
 ANTI_AFK = on
 
 
@@ -91,7 +95,9 @@ MESSAGE = THANKS FOR COME
 #  6. TIMED LEAVE / REJOIN   (each bot does this inside its own turn)
 # ---------------------------------------------------------------------
 # Minutes a bot stays before it leaves for a moment and comes back. 0 = never.
-STAY_MINUTES = 30
+# Keep 0 on Aternos: while the only bot is out, the server is EMPTY and
+# Aternos can stop it. (Rotation above already switches bots without a gap.)
+STAY_MINUTES = 0
 
 # Seconds the bot stays out during that short leave.
 LEAVE_WAIT = 10
@@ -107,7 +113,7 @@ REJOIN_WAIT = 5
 REJOIN_MAX  = 20
 
 # A join attempt that takes longer than this many seconds is cancelled.
-JOIN_TIMEOUT = 60
+JOIN_TIMEOUT = 45
 
 # No data from the server for this many seconds = dead connection, so the
 # bot reconnects by itself. 0 = off. (Do not go below 30.)
@@ -123,7 +129,7 @@ OFFLINE_RETRY = 15
 
 # Connected to the server but no login after this many seconds = the version
 # does not fit, so the next version is tried. 0 = off.
-JOIN_HANG_SECONDS = 30
+JOIN_HANG_SECONDS = 20
 
 
 # ---------------------------------------------------------------------

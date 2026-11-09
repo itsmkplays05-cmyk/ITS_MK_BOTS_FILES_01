@@ -1,11 +1,12 @@
 'use strict';
 // =====================================================================
-//  GG BOT v8.0  -  Multi-bot AFK rotation for Minecraft (Railway ready)
+//  GG BOT v9.0  -  Multi-bot AFK rotation for Minecraft (Railway ready)
 //
 //  - Bots rotate in order: BOT_NAME -> BOT_NAME_2 -> BOT_NAME_3 -> ...
 //  - Only one bot is "on duty" for ROTATE_HOURS. The next bot joins first,
 //    then the old bot leaves, so the server is never empty.
-//  - Auto version detection (any version the installed mineflayer supports).
+//  - Smart version join: ping -> exact version -> if it fails, ALL versions newest -> oldest.
+//  - 10 second quiet time after joining (no movement packets), then walking.
 //  - Self-healing connection: server ping before join, exponential backoff,
 //    kick-reason aware retry delays, stale-connection detection, watchdog.
 //  - Random walk inside WALK_RADIUS blocks of the spawn point (no circles).
@@ -32,7 +33,7 @@ const DEFAULTS = {
   SERVER_IP: 'ITS-FRIEND-ONLY-SMP.aternos.me',
   SERVER_PORT: 37984,
   SERVER_VERSION: 'auto',
-  VERSION_FALLBACKS: '1.21.11, 1.21.8, 1.21.4, 1.20.4', // tried one by one if a join hangs on auto detect (needs ViaBackwards on newer servers)
+  VERSION_FALLBACKS: '',   // optional: versions tried first when the detected one fails (after that ALL versions are tried)
   LOGIN_PASSWORD: '2345678',
 
   ROTATE_HOURS: 3,
@@ -54,17 +55,17 @@ const DEFAULTS = {
   CHAT_MESSAGES: false,
   CHAT_DELAY: 25,
 
-  STAY_MINUTES: 30,
+  STAY_MINUTES: 0,
   LEAVE_WAIT: 10,
 
   // connection stability
   REJOIN_WAIT: 5,          // first reconnect delay (seconds), doubles after every failure
   REJOIN_MAX: 20,          // reconnect delay never goes above this (seconds)
-  JOIN_TIMEOUT: 60,        // give up a join attempt after this many seconds
+  JOIN_TIMEOUT: 45,        // give up a join attempt after this many seconds
   STALE_TIMEOUT: 75,       // no data from the server for this long = dead connection (0 = off)
   PING_BEFORE_JOIN: true,  // check that the server is up before joining (saves spam)
   OFFLINE_RETRY: 15,       // wait this long when the server is offline / starting (seconds)
-  JOIN_HANG_SECONDS: 30,   // connected but no login after this long = try the next version (0 = off)
+  JOIN_HANG_SECONDS: 20,   // connected but no login after this long = try the next version (0 = off)
 
   DISCORD_WEBHOOK: '',
   DISCORD_NAME: 'GG_BOT Logs',
@@ -123,14 +124,15 @@ function loadSettings() {
   }
   S.VERSION = /^(auto|latest|)$/i.test(S.SERVER_VERSION) ? false : S.SERVER_VERSION;
   S.SERVER_PORT = Math.floor(S.SERVER_PORT) || 25565;
-  const sup = Array.isArray(mineflayer.supportedVersions) ? mineflayer.supportedVersions : null;
-  S.FALLBACKS = String(S.VERSION_FALLBACKS || '').split(',').map(v => v.trim()).filter(v => v && (!sup || sup.includes(v)));
+  S.FALLBACKS = String(S.VERSION_FALLBACKS || '').split(',').map(v => v.trim()).filter(Boolean);
   S.REJOIN_WAIT = Math.max(S.REJOIN_WAIT, 1);
   S.REJOIN_MAX = Math.max(S.REJOIN_MAX, S.REJOIN_WAIT);
   S.JOIN_TIMEOUT = Math.max(S.JOIN_TIMEOUT, 15);
   S.OFFLINE_RETRY = Math.max(S.OFFLINE_RETRY, 5);
   S.CONSOLE_LINES = Math.min(Math.max(Math.floor(S.CONSOLE_LINES) || 500, 50), 2000);
   if (S.JOIN_HANG_SECONDS > 0) S.JOIN_HANG_SECONDS = Math.max(S.JOIN_HANG_SECONDS, 10);
+  S.WALK_START_DELAY = Math.max(S.WALK_START_DELAY, 10); // never move earlier than 10s after joining
+  S.WALK_RADIUS = Math.max(S.WALK_RADIUS, 10);
   if (S.STALE_TIMEOUT > 0) S.STALE_TIMEOUT = Math.max(S.STALE_TIMEOUT, 30);
 
   const names = [], seen = new Set();
@@ -282,20 +284,28 @@ function guardPackets(b, who) {
     return orig(name, params);
   };
 }
-// Random point near the bot, never further than R blocks from the spawn point.
+// Random point 10-30 blocks from the bot, always inside R blocks of the spawn point.
+// Near the edge the bot is sent back toward the spawn (no hugging the border, no circles).
 function pickTarget(p, spawn, R) {
-  let tx = p.x + (Math.random() * 2 - 1) * 30;
-  let tz = p.z + (Math.random() * 2 - 1) * 30;
-  const dx = tx - spawn.x, dz = tz - spawn.z, d = Math.hypot(dx, dz);
-  if (d > R) { tx = spawn.x + dx / d * R; tz = spawn.z + dz / d * R; }
-  return { x: tx, z: tz };
+  if (Math.hypot(p.x - spawn.x, p.z - spawn.z) > R * 0.97) return { x: spawn.x, z: spawn.z, home: true };
+  for (let i = 0; i < 10; i++) {
+    const ang = Math.random() * Math.PI * 2, dist = 10 + Math.random() * 20;
+    const tx = p.x + Math.cos(ang) * dist, tz = p.z + Math.sin(ang) * dist;
+    if (Math.hypot(tx - spawn.x, tz - spawn.z) <= R * 0.95) return { x: tx, z: tz };
+  }
+  const ang = Math.atan2(spawn.z - p.z, spawn.x - p.x) + (Math.random() - 0.5);
+  const dist = 10 + Math.random() * 20;
+  return { x: p.x + Math.cos(ang) * dist, z: p.z + Math.sin(ang) * dist };
 }
+
+// Messages that mean "the bot speaks a different protocol than the server" (wrong version).
+const VERSION_ERR = /bad packet|invalid packet|decoderexception|badly compressed|larger than i expected|unknown packet|illegal packet|could not be decoded|protocol error|partial ?read|chunk size is|only \d+ was read|varint is too big|unknown (state|packet id)|deserializ/i;
 
 // Decides how long to wait before the next join attempt, based on WHY the last one ended.
 function retryPlan(text, fails) {
   const t = String(text || '').toLowerCase();
   let wait = Math.min(S.REJOIN_MAX, S.REJOIN_WAIT * Math.pow(2, Math.max(0, fails - 1)));
-  let note = '', versionProblem = false;
+  let note = '', versionProblem = false, afk = false, moveProblem = false;
   if (/throttl|too (fast|quickly)|wait before reconnect/.test(t)) {
     wait = Math.max(wait, 15); note = 'server is throttling fast reconnects';
   } else if (/banned|ban reason|you are ban/.test(t)) {
@@ -306,14 +316,17 @@ function retryPlan(text, fails) {
     wait = Math.max(wait, 20); note = 'same name is still online on the server';
   } else if (/server (is )?full|is full/.test(t)) {
     wait = Math.max(wait, 30); note = 'server is full';
-  } else if (/outdated|incompatible|unsupported|not supported|protocol/.test(t)) {
-    wait = Math.max(wait, 30); note = 'version mismatch between bot and server'; versionProblem = true;
+  } else if (/afk|idle|inactiv|away from keyboard|not moving|no movement/.test(t)) {
+    wait = Math.max(Math.min(wait, 8), 3); afk = true; note = 'kicked for being AFK - the bot moves more from now on';
+  } else if (/invalid move|moved too quickly|moved wrongly|illegal position|invalid position/.test(t)) {
+    wait = Math.max(wait, 8); moveProblem = true; note = 'server did not like a movement packet - the quiet time after joining is longer now';
+  } else if (VERSION_ERR.test(t) || /outdated|incompatible|unsupported|not supported|protocol/.test(t)) {
+    wait = Math.max(Math.min(wait, 10), 5); note = 'version mismatch between bot and server - trying another version'; versionProblem = true;
   } else if (/closed|restart|stopping|shutting down|going down/.test(t)) {
     wait = Math.max(wait, 15); note = 'server is restarting';
   }
-  return { wait: Math.round(wait + Math.random() * 2), note, versionProblem };
+  return { wait: Math.round(wait + Math.random() * 2), note, versionProblem, afk, moveProblem };
 }
-
 // ============================ SERVER CHECK ============================
 // Pings the server (no login) to see if it is up and which version it reports.
 const probe = { at: 0, result: { state: 'unknown' } };
@@ -349,29 +362,96 @@ async function probeServer() {
   return result;
 }
 
-// ============================ SHARED STATE ============================
-const shared = { forcedVersion: null, forcedAt: 0, versionHintAt: 0, goodVersion: null, ladderPos: 0 }; // server version problem is the same for every bot
-
-// Version ladder: auto detect first, then the fallback versions from settings (only when a join hangs or is refused as outdated).
-const LADDER = [false];
-if (String(S.VERSION_FALLBACKS || '').trim()) {
-  [mineflayer.latestSupportedVersion, ...S.FALLBACKS].forEach(v => { if (v && !LADDER.includes(v)) LADDER.push(v); });
+// ============================ VERSIONS ============================
+// Every release the installed library can speak, newest -> oldest, one entry per protocol.
+// A join walks this list when the first guess does not work, so ALL versions can be reached.
+const shared = { tried: new Set(), versionHintAt: 0, goodVersion: null, ladder: null, ladderKey: null, ladderPos: 0, afkLevel: 0, quietBoost: 0, newerNoted: false };
+let mdLib = null;
+try { mdLib = require('minecraft-data'); } catch (_) { /* optional */ }
+const verParts = v => String(v).split('.').map(n => parseInt(n, 10) || 0);
+function cmpVer(a, b) { // > 0 when a is newer than b
+  const x = verParts(a), y = verParts(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; }
+  return 0;
 }
-// Does the installed library speak this protocol natively? (true / false / null = unknown)
-function nativeSupported(protocol) {
+function libSupports(v) {
+  if (!mdLib || !v) return false;
   try {
-    const md = require('minecraft-data');
-    const by = md.postNettyVersionsByProtocolVersion && md.postNettyVersionsByProtocolVersion.pc;
-    if (!by) return null;
-    return Array.isArray(by[protocol]) ? by[protocol].length > 0 : !!by[protocol];
-  } catch (_) { return null; }
+    const d = mdLib(String(v));
+    if (!d || !d.version) return false;
+    const sup = mineflayer.supportedVersions;
+    if (!Array.isArray(sup) || !sup.length) return true;
+    return sup.includes(String(v)) || sup.includes(d.version.majorVersion) || sup.includes(d.version.minecraftVersion);
+  } catch (_) { return false; }
 }
-function advanceLadder(who, from, why) {
-  if (S.VERSION || shared.forcedVersion || LADDER.length < 2) return;
-  shared.ladderPos = (shared.ladderPos + 1) % LADDER.length;
-  const next = LADDER[shared.ladderPos];
-  log(`${why} with version ${from || 'auto'} - next try uses ${next || 'auto detect'}`, 'warn', who);
-  if (shared.ladderPos === 0) versionHint();
+const VERS = (() => {
+  const byProto = new Map();
+  const list = (mdLib && mdLib.versions && mdLib.versions.pc) || [];
+  for (const x of list) {
+    const v = x && x.minecraftVersion;
+    if (!v || !/^\d+\.\d+(\.\d+)?$/.test(v)) continue;                       // releases only, no snapshots
+    if (!Number.isFinite(x.version) || x.version < 47 || x.version > 100000) continue; // 1.8 and newer
+    if (!libSupports(v)) continue;
+    const have = byProto.get(x.version);
+    if (!have || cmpVer(v, have) > 0) byProto.set(x.version, v);
+  }
+  let all = [...byProto.values()].sort((a, b) => cmpVer(b, a));
+  if (!all.length && mineflayer.latestSupportedVersion) all = [mineflayer.latestSupportedVersion];
+  return { all, byProto, minProto: Math.min(...byProto.keys(), Infinity) };
+})();
+// Does the installed library speak this protocol natively? (true / false)
+function libKnowsProtocol(protocol) { return VERS.byProto.has(protocol); }
+
+// Order of versions to try, based on what the server ping told us.
+function makeLadder(pr) {
+  const out = [];
+  const add = v => { if (v !== undefined && v !== null && !out.includes(v)) out.push(v); };
+  const proto = pr && pr.protocol;
+  if (proto && VERS.byProto.has(proto)) add(VERS.byProto.get(proto));            // exact match
+  else if (proto && proto > 0 && proto < VERS.minProto) add(VERS.all[VERS.all.length - 1]); // older than 1.8
+  else if (proto && proto > 0) add(VERS.all[0]);                                 // newer than the library: newest it has (ViaBackwards)
+  else add(false);                                                                // no info: let mineflayer detect
+  S.FALLBACKS.forEach(v => { if (libSupports(v)) add(v); });
+  VERS.all.forEach(add);
+  return out;
+}
+function getLadder() { // rebuilt when the server's protocol changes (server was updated)
+  const key = String((probe.result && probe.result.protocol) || '');
+  if (!shared.ladder || shared.ladderKey !== key) {
+    shared.ladder = makeLadder(probe.result);
+    shared.ladderKey = key;
+    shared.ladderPos = 0;
+    shared.tried.clear();
+  }
+  return shared.ladder;
+}
+// "Outdated client! Please use 1.21.4" -> 1.21.4
+function versionFromText(text, except) {
+  const found = String(text || '').match(/\b\d{1,2}\.\d{1,2}(?:\.\d{1,2})?\b/g) || [];
+  for (const v of found) if (v !== except && libSupports(v)) return v;
+  return null;
+}
+function advanceLadder(who, from, why, text) {
+  if (S.VERSION) return;
+  const ladder = getLadder();
+  if (ladder.length < 2) return;
+  shared.goodVersion = null;
+  shared.tried.add(from);
+  let pos;
+  let hint = versionFromText(text, from);
+  if (hint && shared.tried.has(hint)) hint = null; // never bounce between two versions
+  if (hint && ladder.includes(hint)) {
+    pos = ladder.indexOf(hint);
+  } else {
+    hint = null;
+    let idx = ladder.indexOf(from);
+    if (idx < 0) idx = shared.ladderPos;
+    pos = idx + 1;
+    if (pos >= ladder.length) { pos = 0; shared.tried.clear(); versionHint(); }
+  }
+  shared.ladderPos = pos;
+  const next = ladder[pos];
+  log(`${why} with version ${from || 'auto'} - next try uses ${next || 'auto detect'}${hint ? ' (server told us this version)' : ''} [${pos + 1}/${ladder.length}]`, 'warn', who);
 }
 let shuttingDown = false;
 
@@ -379,9 +459,8 @@ function versionHint() {
   const latest = mineflayer.latestSupportedVersion || 'unknown';
   if (Date.now() - shared.versionHintAt < 600000) return;
   shared.versionHintAt = Date.now();
-  log(`the installed mineflayer supports up to Minecraft ${latest}, but the server runs a newer/different version. ` +
-    'Fix: (1) install BOTH ViaVersion and ViaBackwards on the server (ViaBackwards is the one that lets older bots join), or (2) set the server to a supported version, or ' +
-    '(3) redeploy later - a fresh Railway build pulls the newest mineflayer automatically. See README "Supported versions".', 'warn');
+  log(`every version up to Minecraft ${latest} was tried. If the server is NEWER than that, install BOTH ViaVersion and ViaBackwards on the server ` +
+    '(ViaBackwards is the one that lets older bots join), or redeploy later - a fresh Railway build pulls the newest mineflayer automatically.', 'warn');
 }
 
 // ============================ ONE BOT (WORKER) ============================
@@ -514,12 +593,14 @@ class Worker {
     } else {
       this.failsInRow++;
       this.log(`could not join: ${reason}`, 'warn');
-      if (shared.goodVersion) { shared.goodVersion = null; shared.ladderPos = 0; } // server may have changed version: detect again
+      if (shared.goodVersion) { shared.goodVersion = null; shared.ladderPos = 0; } // server may have changed version: guess again
     }
     this.joinedAt = 0;
     const plan = retryPlan(reason, this.failsInRow);
     if (plan.note) this.log(plan.note, 'warn');
-    if (plan.versionProblem) { advanceLadder(this.name, this.lastVer, 'version refused'); versionHint(); }
+    if (plan.versionProblem) advanceLadder(this.name, this.lastVer, 'version refused', reason);
+    if (plan.afk) shared.afkLevel = Math.min(3, shared.afkLevel + 1);
+    if (plan.moveProblem) shared.quietBoost = Math.min(30, shared.quietBoost + 5);
     this.scheduleRejoin(plan.wait, reason);
   }
 
@@ -533,8 +614,11 @@ class Worker {
       if (!data) data = require('minecraft-data')(b.version);
       const mv = new Movements(b, data);
       mv.canDig = false; mv.allowParkour = false; mv.allow1by1towers = false;
+      mv.allowSprinting = false;   // saves food, looks calmer
+      mv.maxDropDown = 3;          // never jump off high places
       b.pathfinder.setMovements(mv);
-      b.pathfinder.thinkTimeout = 4000;
+      b.pathfinder.thinkTimeout = 2500; // short thinking = no lag, keep-alive packets are never late
+      b.pathfinder.tickTimeout = 10;
     } catch (err) {
       usePathfinder = false;
       this.log(`pathfinder not available (${err.message}) - using simple walking`, 'warn');
@@ -545,22 +629,23 @@ class Worker {
       while (this.session === id && b === this.bot) {
         if (!b.entity) { await sleep(1000); continue; }
         const t = pickTarget(b.entity.position, spawn, R);
-        this.log(`going to X ${t.x.toFixed(0)} Z ${t.z.toFixed(0)}`, 'move');
+        const away = Math.round(Math.hypot(b.entity.position.x - spawn.x, b.entity.position.z - spawn.z));
+        this.log(`${t.home ? 'going back to spawn' : `going to X ${t.x.toFixed(0)} Z ${t.z.toFixed(0)}`} (${away}/${R} blocks from spawn)`, 'move');
         try {
           if (usePathfinder) {
-            await withTimeout(b.pathfinder.goto(new goals.GoalNearXZ(t.x, t.z, 2)), 20000);
+            await withTimeout(b.pathfinder.goto(new goals.GoalNearXZ(t.x, t.z, 2)), 15000);
             pfFails = 0;
           } else await this.walkSimple(b, id, t);
         } catch (_) {
           try { b.pathfinder.stop(); } catch (_) {}
-          if (usePathfinder && ++pfFails >= 8) {
+          if (usePathfinder && ++pfFails >= 6) {
             usePathfinder = false;
-            this.log('pathfinder keeps failing - switching to simple walking', 'warn');
+            this.log('pathfinder keeps failing (chunks not loaded or blocked) - switching to simple walking', 'warn');
           }
         }
         if (this.session !== id) break;
         try { b.swingArm('right'); } catch (_) {}
-        await sleep(2000 + Math.random() * 6000);
+        await sleep(1500 + Math.random() * 4500 / (1 + shared.afkLevel));
       }
     })().catch(err => this.log('walk error: ' + err.message, 'warn'));
   }
@@ -623,12 +708,12 @@ class Worker {
     this.online = false;
     this.settled = false;
     this.lastKick = '';
-    if (shared.forcedVersion && Date.now() - shared.forcedAt > 30 * 60000) shared.forcedVersion = null; // re-try auto detect
-    const ver = shared.forcedVersion || S.VERSION || shared.goodVersion || LADDER[shared.ladderPos] || false;
+    const ladder = getLadder();
+    const ver = S.VERSION || shared.goodVersion || ladder[shared.ladderPos] || false;
     this.lastVer = ver;
     const pr = probe.result || {};
     if (pr.version) this.log(`server reports "${pr.version}"${pr.protocol ? ' (protocol ' + pr.protocol + ')' : ''}`);
-    if (pr.protocol && !shared.newerNoted && nativeSupported(pr.protocol) === false) {
+    if (pr.protocol && !shared.newerNoted && !libKnowsProtocol(pr.protocol)) {
       shared.newerNoted = true;
       this.log(`server speaks protocol ${pr.protocol}, newer than this bot library (supports up to ${mineflayer.latestSupportedVersion || '?'}) - the bot joins through ViaBackwards on the server using an older version`, 'warn');
     }
@@ -638,7 +723,8 @@ class Worker {
       b = mineflayer.createBot({
         host: S.SERVER_IP, port: S.SERVER_PORT, username: this.name, version: ver, auth: 'offline',
         checkTimeoutInterval: 120000, // laggy servers won't cause false "timed out"
-        connectTimeout: 30000
+        connectTimeout: 30000,
+        viewDistance: 'tiny' // small view = less data + CPU (walking hops are only 10-30 blocks)
       });
     } catch (err) {
       this.log('create failed: ' + err.message, 'error');
@@ -724,7 +810,7 @@ class Worker {
       if (b !== this.bot) return; // this bot was switched off while it was still joining
       this.joinedAt = Date.now(); this.failsInRow = 0; this.online = true;
       lastPacket = Date.now();
-      if (!S.VERSION) { shared.goodVersion = b.version; shared.ladderPos = 0; } // remember what worked
+      if (!S.VERSION) { shared.goodVersion = b.version; shared.ladderPos = 0; shared.tried.clear(); } // remember what worked
       this.log(`joined server (version ${b.version})`, 'join');
       this.timers.push(setTimeout(() => { ready = true; }, 4000));
 
@@ -740,6 +826,8 @@ class Worker {
       }
 
       const spawnT = Date.now();
+      const quietMs = (S.WALK_START_DELAY + shared.quietBoost) * 1000; // nothing moves before this
+      this.log(`quiet time: no movement for ${Math.round(quietMs / 1000)}s after joining`);
       const pw = S.LOGIN_PASSWORD;
       const auth = { done: !pw, sent: 0, last: 0, login: false, register: false, walk: false };
 
@@ -763,7 +851,7 @@ class Worker {
         this.settled = true; // login is finished -> this bot is fully ready (rotation waits for this)
         if (auth.walk) return;
         auth.walk = true;
-        const at = Math.max(spawnT + S.WALK_START_DELAY * 1000, Date.now() + 3000);
+        const at = Math.max(spawnT + quietMs, Date.now() + 3000);
         this.timers.push(setTimeout(() => beginWalk(0), Math.max(at - Date.now(), 0)));
       };
       const say = (cmd) => {
@@ -798,13 +886,30 @@ class Worker {
       } else scheduleWalk();
 
       if (S.ANTI_AFK) {
+        // Real activity (arm swing, head turn, jump, small step) so AFK plugins do not kick.
+        // Starts only after the walk has started; never fights with the pathfinder.
+        let nextAct = 0;
         this.timers.push(setInterval(() => {
+          if (this.session !== id || b !== this.bot || !b.physicsEnabled || !b.entity) return;
+          if (Date.now() < nextAct) return;
+          nextAct = Date.now() + Math.max(5000, 14000 - shared.afkLevel * 3500) + Math.random() * 3000;
           try {
-            b.swingArm('right');
             const e = b.entity;
-            if (e && Number.isFinite(e.yaw)) b.look(e.yaw + (Math.random() - 0.5) * 0.6, 0, false);
+            b.swingArm('right');
+            const moving = b.pathfinder && b.pathfinder.isMoving && b.pathfinder.isMoving();
+            if (moving || !Number.isFinite(e.yaw)) return;
+            const pr = b.look(e.yaw + (Math.random() - 0.5) * 1.4, (Math.random() - 0.5) * 0.5, false);
+            if (pr && pr.catch) pr.catch(() => {});
+            if (shared.afkLevel >= 1 || Math.random() < 0.5) {
+              b.setControlState('jump', true);
+              setTimeout(() => { try { b.setControlState('jump', false); } catch (_) {} }, 250);
+            }
+            if (shared.afkLevel >= 2) {
+              b.setControlState('forward', true);
+              setTimeout(() => { try { b.setControlState('forward', false); } catch (_) {} }, 500);
+            }
           } catch (_) {}
-        }, 20000));
+        }, 2500));
       }
 
       if (S.CHAT_MESSAGES && S.MESSAGE.length) {
@@ -840,12 +945,10 @@ class Worker {
     b.on('error', err => {
       if (b !== this.bot) return;
       this.log(`${err.code ? err.code + ' ' : ''}${err.message}`, 'error');
-      if (!this.joinedAt && /not supported|unsupported/i.test(err.message)) {
-        if (!shared.forcedVersion && mineflayer.latestSupportedVersion) {
-          shared.forcedVersion = mineflayer.latestSupportedVersion;
-          shared.forcedAt = Date.now();
-          this.log(`server version not supported, trying ${shared.forcedVersion}`, 'warn');
-        } else versionHint();
+      // Packet decode errors right after joining = the bot speaks a different version than the server.
+      if (this.joinedAt && Date.now() - this.joinedAt < 30000 && VERSION_ERR.test(err.message)) {
+        b._pktErr = (b._pktErr || 0) + 1;
+        if (b._pktErr >= 3) { this.log('packet errors right after joining - the version does not match', 'warn'); this.handleEnd(b, 'invalid packets: ' + err.message); }
       }
       this.timers.push(setTimeout(() => { if (!this.joinedAt) this.handleEnd(b, err.code || err.message); }, 3000));
     });
@@ -977,9 +1080,10 @@ class Rotator {
         maxPlayers: pr.max == null ? null : pr.max
       },
       connection: {
-        botVersion: shared.goodVersion || shared.forcedVersion || S.VERSION || null,
-        ladder: LADDER.map(v => v || 'auto'),
+        botVersion: shared.goodVersion || S.VERSION || null,
+        ladder: (() => { const l = getLadder().map(v => v || 'auto'); return l.length > 6 ? [...l.slice(0, 6), `+${l.length - 6} more`] : l; })(),
         ladderPos: shared.ladderPos,
+        afkLevel: shared.afkLevel,
         libraryMax: mineflayer.latestSupportedVersion || null
       },
       rotation: {
@@ -1278,6 +1382,6 @@ async function shutdown(sig) {
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => shutdown(sig));
 
 log(`started | bots ${S.BOT_NAMES.join(', ')} | ${S.ROTATE_HOURS}h each | walk ${S.RANDOM_WALK ? 'on' : 'off'} (${S.WALK_RADIUS} blocks) | chat ${S.CHAT_MESSAGES ? 'on' : 'off'} | stay ${S.STAY_MINUTES}min | discord ${S.DISCORD_WEBHOOK ? 'on' : 'off'}`);
-log(`version mode: ${S.VERSION || 'auto-detect' + (LADDER.length > 1 ? ' + fallbacks ' + LADDER.slice(1).join(', ') : '')} | mineflayer supports up to ${mineflayer.latestSupportedVersion || 'unknown'} | node ${process.version}`);
+log(`version mode: ${S.VERSION ? 'fixed ' + S.VERSION : 'smart (ping -> exact version -> all ' + VERS.all.length + ' versions ' + (VERS.all[0] || '?') + ' ... ' + (VERS.all[VERS.all.length - 1] || '?') + ')'} | mineflayer supports up to ${mineflayer.latestSupportedVersion || 'unknown'} | node ${process.version}`);
 rotator.start();
 startStatusPage(rotator);
